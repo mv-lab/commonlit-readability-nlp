@@ -6,7 +6,7 @@ For all models:  Reran some folds which were high RMSE with different LR. Some f
 LB 0.465 <br>
 CV around 0.47-0.483 across 5 folds.
 
-`python pytorch_bert.py -model roberta-large  -model_dir roberta_l_0624 -max_len 250 -batch_size 8 -scheduler cosine -lr 2e-5 -epochs 10 -gpu 0 1 -wd 0.01 -hidden_size 1024 -eval_steps 10 -use_dp -use_dropout 0.1 -use_hidden mean  -fc_size 4096 -pretrained_model roberta_large_pretrain_0609`
+`python pytorch_bert.py -model roberta-large  -model_dir roberta_l_0624 -max_len 250 -batch_size 8 -scheduler cosine -lr 2e-5 -epochs 10 -gpu 0 1 -wd 0.01 -hidden_size 1024 -eval_steps 10 -use_dp -use_dropout 0.1 -pretrained_model roberta_large_pretrain_0609`
 
 
 CV: <br>
