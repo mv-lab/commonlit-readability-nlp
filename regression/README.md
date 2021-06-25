@@ -10,7 +10,7 @@ CV around 0.47-0.483 across 5 folds.
 
 
 CV: <br>
-roberta_l_0621_fold0/params.txt:Best RMSE in fold: 0 was: 0.4763 <br>
+roberta_l_0621_fold0/params.txt:Best RMSE in fold: 0 was: 0.4763 -- No pretrained model <br>
 roberta_l_0621_fold1/params.txt:Best RMSE in fold: 1 was: 0.4843 <br>
 roberta_l_0621_fold2/params.txt:Best RMSE in fold: 2 was: 0.4840 <br>
 roberta_l_0621_fold3/params.txt:Best RMSE in fold: 3 was: 0.4719 <br>
