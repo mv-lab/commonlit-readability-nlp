@@ -17,6 +17,20 @@ roberta_l_0621_fold3/params.txt:Best RMSE in fold: 3 was: 0.4719 <br>
 roberta_l_0621_fold4/params.txt:Best RMSE in fold: 4 was: 0.4732 <br>
 
 
+
+## Deberta-large
+LB  ?? But better than 0.471
+
+`python pytorch_bert.py -model microsoft/deberta-large -model_dir deberta_l_0627 -max_len 250 -batch_size 4 -test_batch_size 4 -gpu 0 1 -wd 0.01 -hidden_size 1024 -use_dp -eval_steps 35 -epochs 5 -fc_size 1024 -use_single_fc -use_dropout 0.3 -scheduler cosine -lr 2e-5 -pretrained_model deberta_large_pretrain_0616`
+
+CV: <br>
+../deberta_l_0627/params.txt:Best RMSE in fold: 0 was: 0.4848 - post fix. 0.4758. lr 1e-5. eval 10. dropout 0.3 <br>
+../deberta_l_0627/params.txt:Best RMSE in fold: 1 was: 0.4897 - post fix 0.4888. seed 42. lr 1e-5 step 20 <br>
+../deberta_l_0627/params.txt:Best RMSE in fold: 2 was: 0.4845 <br>
+../deberta_l_0627/params.txt:Best RMSE in fold: 3 was: 0.5059 - worse pretrained. Post fix 0.4778 removed pretrained model eval 20 wd 0.001 <br>
+../deberta_l_0627/params.txt:Best RMSE in fold: 4 was: 0.4712
+
+
 ## Deberta-large
 LB 0.471
 
