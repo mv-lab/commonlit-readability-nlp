@@ -19,7 +19,7 @@ roberta_l_0621_fold4/params.txt:Best RMSE in fold: 4 was: 0.4732 <br>
 
 
 ## Deberta-large
-LB  ?? But better than 0.471
+LB  0.466 
 
 `python pytorch_bert.py -model microsoft/deberta-large -model_dir deberta_l_0627 -max_len 250 -batch_size 4 -test_batch_size 4 -gpu 0 1 -wd 0.01 -hidden_size 1024 -use_dp -eval_steps 35 -epochs 5 -fc_size 1024 -use_dropout 0.3 -scheduler cosine -lr 2e-5 -pretrained_model deberta_large_pretrain_0616`
 
