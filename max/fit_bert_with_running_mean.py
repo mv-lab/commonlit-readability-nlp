@@ -18,12 +18,41 @@ with open('key.txt') as f:
 wandb.login(key=key)
 
 
+class RunningMean:
+    def __init__(self, momentum=0.9, epsilon=1e-05):
+        self.momentum = momentum
+        self.epsilon = epsilon
+
+        self.running_mean = torch.tensor(0)
+
+    def update(self, input):
+        mean = input.mean()
+        self.running_mean = self.running_mean.to(mean.device)
+        self.running_mean = (self.momentum * self.running_mean) + (1.0 - self.momentum) * mean  # .to(input.device)
+
+
 class NLPClassificationModelFold(NLPClassificationModel):
 
     def __init__(self, config: Config, fold):
         super().__init__(config)
         self.fold = fold
         self.mu = 0
+        self.running_mean = RunningMean()
+
+    def training_step(self, input_dict, batch_num):
+
+        output_dict = self(input_dict)
+        self.running_mean.update(output_dict['logits'].detach() - output_dict[self.config.target_column_name].detach())
+
+        output_dict['logits'] = output_dict['logits'] + self.running_mean.running_mean
+        loss = self.dict_loss(output_dict)
+        self.log('training_loss', loss.detach().cpu())
+        self.log('running_mean', self.running_mean.running_mean.cpu())
+
+        if self.fold is not None:
+            self.log('fold_id', self.fold)
+
+        return loss
 
     def calibrate(self):
         dataloder = self.train_dataloader()
@@ -81,7 +110,7 @@ def fit(config: Config, df_train, df_test,
     logger = None
 
     if logger_class == WandbLogger:
-        logger = logger_class(name=f'mean_pred_{config.model_name}_{config.lr}_{config.scheduler}',
+        logger = logger_class(name=f'calibrate_train_{config.model_name}_{config.lr}_{config.scheduler}',
                               project='CommonlitReadabilityTrain',
                               job_type='train')
         logger.log_hyperparams(config.as_dict())
@@ -145,9 +174,9 @@ def fit(config: Config, df_train, df_test,
 
 if __name__ == '__main__':
     df_train = pd.read_csv('train_folds.csv')
-    df_test = pd.read_csv('../../input/test.csv')
+    df_test = pd.read_csv('../input/test.csv')
 
-    config = Config(model_name='roberta-large',
+    config = Config(model_name='roberta-base',
                     batch_size=6,
                     optimizer_name='AdamW',
                     loss_name='rmse_loss',
