@@ -28,6 +28,7 @@ import pickle
 import readability
 import syntok.segmenter as segmenter
 import wandb
+from scipy.stats import norm
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
 parser.add_argument('-model', '--model', type=str, help='Pytorch (timm) model name')
@@ -68,7 +69,9 @@ parser.add_argument('-run_name', type=str, default='test-run', help='Wandb run n
 parser.add_argument('-enable_wandb', action='store_true', help='Enable logging in wandb')
 parser.add_argument('-run_folds', type=int, nargs='+', help='Run targetted folds')
 parser.add_argument('-use_custom_head', action='store_true', help='Use Custom Head')
-parser.add_argument('-init_weights', action='store_true', help='Use Custom Head')
+parser.add_argument('-init_weights', action='store_true', help='Init weights')
+parser.add_argument('-reinit_weights', type=int, help='Re-init last n layers of transformer')
+parser.add_argument('-smooth_loss', action='store_true', help='Smooth loss')
 
 
 best_loss = 100
@@ -103,7 +106,7 @@ class Config:
     TRAIN_BS = args.batch_size
     VALID_BS = args.valid_batch_size
     BERT_MODEL = args.model
-    DBERT_MODELS = ['distilbert-base-uncased', 'xlnet', 't5']
+    DBERT_MODELS = ['distilbert-base-uncased', 'xlnet', 't5', 'valhalla/bart-large-finetuned-squadv1', 'facebook/bart-large']
     FILE_NAME = args.train_file #'../input/train_folds.csv'
     TOKENIZER = transformers.AutoTokenizer.from_pretrained(BERT_MODEL,return_tensors='pt')
     scaler = GradScaler()
@@ -132,8 +135,14 @@ def seed_everything(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True  # False
+    torch.backends.cudnn.benchmark = False
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 def sample_target(features, target):
     mean, stddev = target
@@ -391,7 +400,12 @@ class Trainer:
                 if any(x in Config.BERT_MODEL for x in Config.DBERT_MODELS):
                    ttis = None
                 outputs = self.model(ids=ids, mask=mask, token_type_ids=ttis, rd_features=rd_features)
-                loss = self.loss_fn(outputs, targets, errors)
+
+                if args.smooth_loss:
+                    mu, sigma = norm.fit(np.concatenate([outputs.cpu().numpy()], 0) - np.concatenate([targets.cpu().numpy()], 0))
+                    loss = self.loss_fn(outputs-mu, targets, errors)
+                else:
+                    loss = self.loss_fn(outputs, targets, errors)
                 if args.enable_wandb:
                     wandb.log({"val_loss": loss})
                 prog_bar.set_description('Val loss: {:.2f}'.format(loss.item()))
@@ -468,6 +482,26 @@ class BERTModel(nn.Module):
         #self.fc = nn.Conv1d(args.hidden_size, 1, kernel_size=3) 
         if args.init_weights:
             self._init_weights(self.fc)
+
+        if args.reinit_weights:
+            reinit_layers = args.reinit_weights
+            if reinit_layers > 0:
+                print(f'Reinitializing Last {reinit_layers} Layers of the Transformer Model')
+                #encoder_temp = getattr(self.bert, _model_type)
+                for layer in self.bert.encoder.layer[-reinit_layers:]:
+                    for module in layer.modules():
+                        if isinstance(module, nn.Linear):
+                            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+                            if module.bias is not None:
+                                module.bias.data.zero_()
+                        elif isinstance(module, nn.Embedding):
+                            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+                            if module.padding_idx is not None:
+                                module.weight.data[module.padding_idx].zero_()
+                        elif isinstance(module, nn.LayerNorm):
+                            module.bias.data.zero_()
+                            module.weight.data.fill_(1.0)
+                print('Done!')
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -768,6 +802,7 @@ if __name__ == '__main__':
             batch_size = Config.TRAIN_BS,
             shuffle = True,
             num_workers=8,
+            worker_init_fn=seed_worker,
             drop_last=True
         )
 
@@ -776,6 +811,7 @@ if __name__ == '__main__':
             batch_size = Config.VALID_BS,
             shuffle = False,
             num_workers=8,
+            worker_init_fn=seed_worker,
             drop_last=True
         )
         model = BERTModel(multisample_dropout=args.multisample_dropout).to(DEVICE)
@@ -876,7 +912,7 @@ if __name__ == '__main__':
 
                 print(f"Best RMSE in fold: {fold} was: {best_loss:.4f}")
                 print(f"Final RMSE in fold: {fold} was: {current_loss:.4f}")
-             
+            
         with open(params_file, 'a+') as f:
             f.write(f"\nBest RMSE in fold: {fold} was: {best_loss:.4f}\n")
 
