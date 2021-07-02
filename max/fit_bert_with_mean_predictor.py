@@ -1,3 +1,4 @@
+import argparse
 import datetime
 
 from pytorch_lightning.callbacks import LearningRateMonitor
@@ -79,7 +80,7 @@ def loss_factory(loss_name):
     elif loss_name == 'rmse_l1_loss':
         return rmse_l1_loss
     else:
-        raise NotImplementedError
+        raise NotImplementedError(loss_name)
 
 
 def optimizer_factory(optimizer_name, model, lr):
@@ -142,7 +143,7 @@ def optimizer_factory(optimizer_name, model, lr):
 
 
     else:
-        raise NotImplementedError
+        raise NotImplementedError(optimizer_name)
     return optimizer
 
 
@@ -383,6 +384,15 @@ class NLPModel(pl.LightningModule):
         mu, sigma = norm.fit(np.concatenate(logits, 0) - np.concatenate(y_true, 0))
         self.mu = mu
 
+    def training_step(self, input_dict, batch_num):
+        output_dict = self(input_dict)
+        loss = self.dict_loss(output_dict)
+        self.log('training_loss', loss.detach().cpu())
+        if self.fold is not None:
+            self.log('fold_id', self.fold)
+
+        return loss
+
     def validation_step(self, input_dict, batch_nb):
         output_dict = self(input_dict)
         logits = output_dict['logits']
@@ -483,6 +493,7 @@ def fit(config: Config, df_train, df_test,
                               default_root_dir=os.path.join(dirpath, config.to_str()),
                               max_epochs=config.epochs,
                               log_every_n_steps=1,
+                              num_sanity_val_steps=0,
                               min_epochs=1,
                               precision=16,
                               deterministic=True,
@@ -517,6 +528,18 @@ def fit(config: Config, df_train, df_test,
             'logger': logger}
 
 
+parser = argparse.ArgumentParser(description='Process pytorch params.')
+parser.add_argument('-model_name', type=str, default='roberta-base')
+parser.add_argument('-batch_size', type=int, default=8)
+parser.add_argument('-optimizer_name', type=str, default='AdamW')
+parser.add_argument('-loss_name', type=str, default='rmse_l1_loss')
+parser.add_argument('-scheduler', type=str, default='linear_schedule_with_warmup')
+parser.add_argument('-accumulate_grad_batches', type=int, default=4)
+parser.add_argument('-lr', type=float, default=2.5e-5)
+parser.add_argument('-epochs', type=int, default=10)
+
+args = parser.parse_args()
+
 if __name__ == '__main__':
     try:
         with open('key.txt') as f:
@@ -528,16 +551,16 @@ if __name__ == '__main__':
     df_train = pd.read_csv('train_folds.csv')
     df_test = pd.read_csv('../input/test.csv')
 
-    config = Config(model_name='roberta-base',
-                    batch_size=8,
-                    optimizer_name='AdamW',
-                    loss_name='rmse_l1_loss',
-                    scheduler='linear_schedule_with_warmup',
-                    accumulate_grad_batches=4,
-                    lr=2e-5,
-                    epochs=10,
-                    overwrite_train_params={'val_check_interval': 0.5}
-                    )
+    config = Config(model_name=args.model_name,
+                    batch_size=args.batch_size,
+                    optimizer_name=args.optimizer_name,
+                    loss_name=args.loss_name,
+                    scheduler=args.scheduler,
+                    accumulate_grad_batches=args.accumulate_grad_batches,
+                    lr=args.lr,
+                    epochs=args.epochs,
+                    overwrite_train_params={'val_check_interval': 0.5})
+
     overwrite_train_params = config.overwrite_train_params
 
     pl.seed_everything(seed=config.seed)
