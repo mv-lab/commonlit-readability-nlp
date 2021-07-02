@@ -44,6 +44,19 @@ deberta_l_0617_fold3/params.txt:Best RMSE in fold: 3 was: 0.4731 <br>
 deberta_l_0617_fold4/params.txt:Best RMSE in fold: 4 was: 0.4867 <br>
 
 ## Electra-large
+LB 0.468
+
+`python pytorch_bert.py -model google/electra-large-discriminator -max_len 256 -batch_size 8 -test_batch_size 8 -gpu 0 1 -wd 0.01 -hidden_size 1024 -use_dp   -fc_size 1024 -use_dropout 0.1 -multisample_dropout -scheduler linear -lr 2e-5 -epochs 5 -eval_steps 50 -pretrained_model electra_large_pretrain_0620`
+
+
+CV:  <br>
+../electra_l_0620_folds0/params.txt:Best RMSE in fold: 0 was: 0.4751 <br>
+../electra_l_0620_folds1/params.txt:Best RMSE in fold: 1 was: 0.4840 <br>
+../electra_l_0620_folds2/params.txt:Best RMSE in fold: 2 was: 0.4736 <br>
+../electra_l_0620_folds3/params.txt:Best RMSE in fold: 3 was: 0.4583 <br>
+../electra_l_0620_folds4/params.txt:Best RMSE in fold: 4 was: 0.4693 <br>
+
+## Electra-large
 LB 0.471
 
 `python pytorch_bert.py -model google/electra-large-discriminator -max_len 256 -batch_size 8 -test_batch_size 8 -gpu 0 1 -wd 0.01 -hidden_size 1024 -use_dp   -fc_size 1024 -use_dropout 0.1 -multisample_dropout -scheduler linear -lr 2e-5 -epochs 5 -eval_steps 50 -pretrained_model electra_large_pretrain_0620`
