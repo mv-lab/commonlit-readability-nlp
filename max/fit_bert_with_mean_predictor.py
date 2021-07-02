@@ -68,6 +68,7 @@ class NLPClassificationModelFold(NLPClassificationModel):
         df = super(NLPClassificationModelFold, self).get_prediction_df(dataloader)
         self.calibrate()
         df['mu'] = self.mu
+        return df
 
 
 def fit(config: Config, df_train, df_test,
