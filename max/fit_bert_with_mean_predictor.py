@@ -156,7 +156,8 @@ if __name__ == '__main__':
                     optimizer_name='AdamW',
                     loss_name='rmse_loss',
                     scheduler='cosine',
-                    lr=2e-5,
+                    accumulate_grad_batches=10,
+                    lr=2.5e-5,
                     epochs=10,
                     overwrite_train_params={'val_check_interval': 0.5}
                     )
