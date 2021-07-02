@@ -431,6 +431,7 @@ def fit(config: Config, df_train, df_test,
                               project='CommonlitReadabilityTrain',
                               job_type='train')
         logger.log_hyperparams(config.as_dict())
+        logger.experiment.save('fit_bert.py')
 
     for fold in range(df_train['kfold'].max() + 1):
         pl.seed_everything(seed=config.seed)
@@ -449,7 +450,7 @@ def fit(config: Config, df_train, df_test,
                               checkpoint_callback=True,
                               callbacks=[checkpoint_callback],
                               gpus='0',
-                              accumulate_grad_batches=1,
+                              accumulate_grad_batches=config.accumulate_grad_batches,
                               default_root_dir=os.path.join(dirpath, config.to_str()),
                               max_epochs=config.epochs,
                               log_every_n_steps=1,

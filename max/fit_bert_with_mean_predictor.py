@@ -1,3 +1,4 @@
+import datetime
 import os
 
 import numpy as np
@@ -81,10 +82,13 @@ def fit(config: Config, df_train, df_test,
     logger = None
 
     if logger_class == WandbLogger:
-        logger = logger_class(name=f'mean_pred_{config.model_name}_{config.lr}_{config.scheduler}',
-                              project='CommonlitReadabilityTrain',
-                              job_type='train')
-        logger.log_hyperparams(config.as_dict())
+        logger = logger_class(
+            name=f'mean_pred_{config.model_name}_{config.lr}_{config.scheduler}_{datetime.datetime.now()}',
+            project='CommonlitReadabilityTrain',
+            job_type='train')
+        logger.experiment.log(config.as_dict())
+        logger.experiment.save('fit_bert.py')
+        logger.experiment.save('fit_bert_with_mean_predictor.py')
 
     for fold in range(df_train['kfold'].max() + 1):
         pl.seed_everything(seed=config.seed)
@@ -135,7 +139,7 @@ def fit(config: Config, df_train, df_test,
     loss_calibrated = np.sqrt(np.mean((df_oof[config.target_column_name] + df_oof['mu'] - df_oof['logits']) ** 2))
 
     if isinstance(logger, WandbLogger):
-        logger.log_metrics(metrics={'oov_rsme': loss, 'oov_rmse_calibrated': loss_calibrated})
+        logger.experiment.log({'oov_rsme': loss, 'oov_rmse_calibrated': loss_calibrated})
     return {'df_oof': df_oof,
             'df_test_preds': df_test_preds,
             'best_weights': best_weights,
@@ -145,9 +149,9 @@ def fit(config: Config, df_train, df_test,
 
 if __name__ == '__main__':
     df_train = pd.read_csv('train_folds.csv')
-    df_test = pd.read_csv('../../input/test.csv')
+    df_test = pd.read_csv('../input/test.csv')
 
-    config = Config(model_name='roberta-large',
+    config = Config(model_name='roberta-base',
                     batch_size=6,
                     optimizer_name='AdamW',
                     loss_name='rmse_loss',
