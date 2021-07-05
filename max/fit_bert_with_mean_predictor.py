@@ -35,6 +35,7 @@ class Config:
     root_dir: str = '../../lightning_logs'
     seed: int = 0
     gpus: str = '0'
+    precision: int = 16
 
     lr: float = 2e-5
     optimizer_name: str = 'AdamW'
@@ -525,7 +526,7 @@ def fit(config: Config, df_train, df_test,
                               log_every_n_steps=1,
                               num_sanity_val_steps=0,
                               min_epochs=1,
-                              precision=16,
+                              precision=config.precision,
                               deterministic=True,
                               gradient_clip_val=0.7,
                               reload_dataloaders_every_epoch=True)

@@ -14,8 +14,9 @@ def objective(trial: Trial):
     df_train = pd.read_csv('train_folds.csv')
     df_test = pd.read_csv('../input/test.csv')
 
-    config = Config(model_name='funnel-transformer/large',
+    config = Config(model_name='microsoft/deberta-large',
                     batch_size=8,
+                    precision=32,
                     optimizer_name='AdamW',
                     loss_name=trial.suggest_categorical(name='loss_name',
                                                         choices=['rmse_loss', 'rmse_l1_loss']),
