@@ -76,7 +76,7 @@ if __name__ == '__main__':
 
     sampler = optuna.samplers.TPESampler(multivariate=True, group=True)
     study = optuna.create_study(sampler=sampler, storage=None, direction='minimize')
-    study.enqueue_trial({'lr': 2e-5, 'scheduler': None})
+    study.enqueue_trial({'lr': 2e-5, 'scheduler': None, "loss_name": 'rmse_loss'})
     study.optimize(objective, n_trials=75, catch=(Exception,))
     with open('study.pkl', 'wb') as f:
         pickle.dump(study, f)
