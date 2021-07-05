@@ -11,19 +11,9 @@ import pytorch_lightning as pl
 
 
 def objective(trial: Trial):
-    df_train = pd.read_csv('../../input/train_folds.csv')
-    df_test = pd.read_csv('../../input/test.csv')
+    df_train = pd.read_csv('train_folds.csv')
+    df_test = pd.read_csv('../input/test.csv')
 
-    config = Config(lr=trial.suggest_loguniform(name='lr', low=5e-6, high=1e-4),
-                    optimizer_name='AdamW',
-                    loss_name='rmse_loss',
-                    model_name='roberta-base',
-                    epochs=5,
-                    scheduler=trial.suggest_categorical(name='scheduler',
-                                                        choices=['linear_schedule_with_warmup',
-                                                                 'cosine',
-                                                                 'plateau',
-                                                                 None]))
     config = Config(model_name='funnel-transformer/large',
                     batch_size=8,
                     optimizer_name=trial.suggest_categorical(name='optimizer_name',
