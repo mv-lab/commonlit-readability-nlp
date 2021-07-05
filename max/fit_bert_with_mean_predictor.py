@@ -33,7 +33,7 @@ from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTok
 @dataclass
 class Config:
     root_dir: str = '../../lightning_logs'
-    seed: int = 0
+    seed: int = 232344
     gpus: str = '0'
     precision: int = 16
 
