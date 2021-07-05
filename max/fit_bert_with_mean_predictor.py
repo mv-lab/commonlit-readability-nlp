@@ -96,7 +96,7 @@ def optimizer_factory(optimizer_name, model, lr):
 
     elif optimizer_name == 'AdamWDifferential':
         # differential learning rate and weight decay
-        wd, lr2 = 0.01, 1e-3
+        wd, lr2 = 0.01, 1e-4
 
         no_decay = ['bias', 'gamma', 'beta']
 
@@ -105,8 +105,15 @@ def optimizer_factory(optimizer_name, model, lr):
         group3 = ['layer.8.', 'layer.9.', 'layer.10.', 'layer.11.']
         group_all = ['layer.0.', 'layer.1.', 'layer.2.', 'layer.3.', 'layer.4.', 'layer.5.', 'layer.6.', 'layer.7.',
                      'layer.8.', 'layer.9.', 'layer.10.', 'layer.11.']
+        if hasattr(model, 'bert'):
+            backbone = model.bert
+        elif hasattr(model, 'roberta'):
+            backbone = model.roberta
+        elif hasattr(model, 'funnel'):
+            backbone = model.funnel
+        else:
+            raise NotImplementedError
 
-        backbone = model.bert if hasattr(model, 'bert') else model.roberta
         backbone_subset = "bert"
         optimizer_parameters = [
             {'params': [p for n, p in backbone.named_parameters() if
