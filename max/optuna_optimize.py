@@ -14,13 +14,13 @@ def objective(trial: Trial):
     df_train = pd.read_csv('train_folds.csv')
     df_test = pd.read_csv('../input/test.csv')
 
-    config = Config(model_name='microsoft/deberta-large',
+    config = Config(model_name='funnel-transformer/large',
                     batch_size=8,
                     precision=32,
+                    accumulate_grad_batches=5,
                     optimizer_name='AdamW',
                     loss_name=trial.suggest_categorical(name='loss_name',
                                                         choices=['rmse_loss', 'rmse_l1_loss']),
-                    accumulate_grad_batches=1,
                     lr=trial.suggest_float(name='lr', low=5e-6, high=5e-5),
                     epochs=10,
                     scheduler=trial.suggest_categorical(name='scheduler',
