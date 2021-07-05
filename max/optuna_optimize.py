@@ -16,7 +16,7 @@ def objective(trial: Trial):
 
     config = Config(model_name='funnel-transformer/large',
                     batch_size=8,
-                    optimizer_name='AdamWNoDecay',
+                    optimizer_name='AdamW',
                     loss_name=trial.suggest_categorical(name='loss_name',
                                                         choices=['rmse_loss', 'rmse_l1_loss']),
                     accumulate_grad_batches=1,
@@ -76,7 +76,9 @@ if __name__ == '__main__':
 
     sampler = optuna.samplers.TPESampler(multivariate=True, group=True)
     study = optuna.create_study(sampler=sampler, storage=None, direction='minimize')
-    study.enqueue_trial({'lr': 2e-5, 'scheduler': None, "loss_name": 'rmse_loss'})
+    study.enqueue_trial({'lr': 2e-5,
+                         'scheduler': 'linear_schedule_with_warmup',
+                         "loss_name": 'rmse_loss'})
     study.optimize(objective, n_trials=75, catch=(Exception,))
     with open('study.pkl', 'wb') as f:
         pickle.dump(study, f)
