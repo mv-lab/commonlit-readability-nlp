@@ -525,6 +525,7 @@ def fit(config: Config, df_train, df_test,
                               min_epochs=1,
                               precision=16,
                               deterministic=True,
+                              gradient_clip_val=0.7,
                               reload_dataloaders_every_epoch=True)
 
         if isinstance(overwrite_train_params, dict):
