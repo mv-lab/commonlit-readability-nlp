@@ -94,6 +94,9 @@ def optimizer_factory(optimizer_name, model, lr):
         ]
         optimizer = transformers.AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False)  # NOQA
 
+    elif optimizer_name == 'AdamWDecay':
+        optimizer = transformers.AdamW(model.parameters(), lr=lr, correct_bias=False)  # NOQA
+
     elif optimizer_name == 'AdamWDifferential':
         # differential learning rate and weight decay
         wd, lr2 = 0.01, 1e-4
@@ -147,7 +150,6 @@ def optimizer_factory(optimizer_name, model, lr):
              "momentum": 0.99},
         ]
         return transformers.AdamW(optimizer_parameters, lr=lr)
-
 
     else:
         raise NotImplementedError(optimizer_name)
