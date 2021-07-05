@@ -19,7 +19,7 @@ def objective(trial: Trial):
                     optimizer_name='AdamW',
                     loss_name=trial.suggest_categorical(name='loss_name',
                                                         choices=['rmse_loss', 'rmse_l1_loss']),
-                    accumulate_grad_batches=4,
+                    accumulate_grad_batches=1,
                     lr=trial.suggest_float(name='lr', low=5e-6, high=5e-5),
                     epochs=10,
                     scheduler=trial.suggest_categorical(name='scheduler',
