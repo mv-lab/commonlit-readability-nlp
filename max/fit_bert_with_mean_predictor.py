@@ -343,17 +343,19 @@ class NLPModel(pl.LightningModule):
         model_config.return_dict = True
         return AutoModelForSequenceClassification.from_pretrained(self.config.model_name, config=model_config)
 
-    def forward(self, input_dict):
+    def forward(self, input_dict, device=None):
         assert 'logits' not in input_dict
         token_type_ids = input_dict.get('token_type_ids')
+        device = device or self.device
+
         if token_type_ids is not None:
-            logits = self.model(input_ids=input_dict['input_ids'].to(self.device),
-                                attention_mask=input_dict['attention_mask'].to(self.device),
-                                token_type_ids=token_type_ids.to(self.device)
+            logits = self.model(input_ids=input_dict['input_ids'].to(device),
+                                attention_mask=input_dict['attention_mask'].to(device),
+                                token_type_ids=token_type_ids.to(device)
                                 ).logits
         else:
-            logits = self.model(input_ids=input_dict['input_ids'].to(self.device),
-                                attention_mask=input_dict['attention_mask'].to(self.device),
+            logits = self.model(input_ids=input_dict['input_ids'].to(device),
+                                attention_mask=input_dict['attention_mask'].to(device),
                                 ).logits
 
         input_dict['logits'] = logits
@@ -375,9 +377,10 @@ class NLPModel(pl.LightningModule):
         dataloder = self.train_dataloader()
         logits = []
         y_true = []
+        device = next(self.model.parameters()).device
         with torch.no_grad():
             for input_dict in tqdm(dataloder, desc='Calibrating...'):
-                output_dict = self(input_dict)
+                output_dict = self(input_dict, device=device)
                 logits += [output_dict['logits'].cpu().numpy()]
                 y_true += [input_dict[self.config.target_column_name].cpu().numpy()]
 
@@ -403,9 +406,10 @@ class NLPModel(pl.LightningModule):
                 'y_pred': logits}
 
     def validation_epoch_end(self, outputs):
+        self.calibrate()
+
         y_true = torch.cat([o['y_true'] for o in outputs], 0)
         y_pred = torch.cat([o['y_pred'] for o in outputs], 0)
-        self.calibrate()
 
         loss = self.valid_loss(y_pred, y_true)
         loss_calibrated = self.valid_loss(y_pred - self.mu, y_true)
@@ -425,6 +429,8 @@ class NLPModel(pl.LightningModule):
         return loss
 
     def get_prediction_df(self, dataloader):
+        self.model.to('cuda:0')
+        self.calibrate()
         return_dicts = self.trainer.predict(dataloaders=dataloader)
         keys = return_dicts[0].keys()
         prediction_dict = {}
@@ -442,8 +448,6 @@ class NLPModel(pl.LightningModule):
                 x = [list(return_dict[key]) for return_dict in return_dicts]
             x = [item for sublist in x for item in sublist]
             prediction_dict[key] = x
-
-        self.calibrate()
 
         df = pd.DataFrame(prediction_dict)
         df['mu'] = self.mu
@@ -519,7 +523,7 @@ def fit(config: Config, df_train, df_test,
     loss_calibrated = np.sqrt(np.mean((df_oof[config.target_column_name] + df_oof['mu'] - df_oof['logits']) ** 2))
 
     if isinstance(logger, WandbLogger):
-        logger.experiment.log({'oov_rsme': loss, 'oov_rmse_calibrated': loss_calibrated})
+        logger.experiment.log({'oof_rsme': loss, 'oof_rmse_calibrated': loss_calibrated})
     return {'df_oof': df_oof,
             'df_test_preds': df_test_preds,
             'best_weights': best_weights,
@@ -588,4 +592,6 @@ if __name__ == '__main__':
 
     logger = return_dict['logger']
     if isinstance(logger, WandbLogger):
-        logger.experiment.save(oof_filepath)
+        wandb_fn = 'df_oof_' + experiment_name + '.csv'
+        df_oof.to_csv(wandb_fn, index=False)
+        logger.experiment.save(wandb_fn)
