@@ -403,6 +403,15 @@ class NLPModel(pl.LightningModule):
 
         return loss
 
+    def on_after_backward(self):
+        grads = []
+        for param in self.model.parameters():
+            if param.grad is not None:
+                grads.append(param.grad.max().detach().cpu().item())
+        grad_max = torch.max(torch.tensor(grads))
+        if isinstance(self.logger, WandbLogger):
+            self.logger.experiment.log({'grad_max': grad_max})
+
     def validation_step(self, input_dict, batch_nb):
         output_dict = self(input_dict)
         logits = output_dict['logits']
