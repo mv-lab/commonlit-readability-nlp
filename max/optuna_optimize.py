@@ -76,7 +76,7 @@ if __name__ == '__main__':
 
     sampler = optuna.samplers.TPESampler(multivariate=True, group=True)
     study = optuna.create_study(sampler=sampler, storage=None, direction='minimize')
-    study.enqueue_trial({'lr': 2e-5,
+    study.enqueue_trial({'lr': 5e-6,
                          'scheduler': 'linear_schedule_with_warmup',
                          "loss_name": 'rmse_loss'})
     study.optimize(objective, n_trials=75, catch=(Exception,))
