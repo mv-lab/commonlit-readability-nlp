@@ -408,9 +408,17 @@ class NLPModel(pl.LightningModule):
         for param in self.model.parameters():
             if param.grad is not None:
                 grads.append(param.grad.max().detach().cpu().item())
-        grad_max = torch.max(torch.tensor(grads))
+        grads = torch.tensor(grads)
+        grad_max = torch.max(grads)
+        grad_mean = torch.mean(grads)
+        grad_median = torch.median(grads)
+        grad_min = torch.min(grads)
+
         if isinstance(self.logger, WandbLogger):
-            self.logger.experiment.log({'grad_max': grad_max})
+            self.logger.experiment.log({'grad_max': grad_max,
+                                        'grad_min': grad_min,
+                                        'grad_mean': grad_mean,
+                                        'grad_median': grad_median})
 
     def validation_step(self, input_dict, batch_nb):
         output_dict = self(input_dict)
