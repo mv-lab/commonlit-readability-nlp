@@ -408,6 +408,7 @@ class NLPModel(pl.LightningModule):
         for param in self.model.parameters():
             if param.grad is not None:
                 grads.append(param.grad.max().detach().cpu().item())
+                param.grad = torch.clamp(param.grad, -.7, .7)
         grads = torch.tensor(grads)
         grad_max = torch.max(grads)
         grad_mean = torch.mean(grads)
@@ -525,7 +526,7 @@ def fit(config: Config, df_train, df_test,
                               min_epochs=1,
                               precision=16,
                               deterministic=True,
-                              gradient_clip_val=0.7,
+                              # gradient_clip_val=0.7, # throws error?
                               reload_dataloaders_every_epoch=True)
 
         if isinstance(overwrite_train_params, dict):
