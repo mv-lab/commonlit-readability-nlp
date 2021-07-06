@@ -29,7 +29,7 @@ def objective(trial: Trial):
                     optimizer_name='AdamW',
                     loss_name=trial.suggest_categorical(name='loss_name',
                                                         choices=['rmse_loss', 'rmse_l1_loss']),
-                    lr=trial.suggest_float(name='lr', low=2e-6, high=1e-5),
+                    lr=trial.suggest_float(name='lr', low=2e-6, high=3e-5),
                     epochs=10,
                     scheduler=trial.suggest_categorical(name='scheduler',
                                                         choices=['linear_schedule_with_warmup',
@@ -79,7 +79,7 @@ if __name__ == '__main__':
 
     sampler = optuna.samplers.TPESampler(multivariate=True, group=True)
     study = optuna.create_study(sampler=sampler, storage=None, direction='minimize')
-    study.enqueue_trial({'lr': 5e-6,
+    study.enqueue_trial({'lr': 1e-5,
                          'scheduler': 'linear_schedule_with_warmup',
                          "loss_name": 'rmse_loss'})
     study.optimize(objective, n_trials=75, catch=(Exception,))
