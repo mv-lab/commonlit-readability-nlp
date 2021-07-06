@@ -8,11 +8,11 @@ LB 0.465 <br>
 
 `python pytorch_bert.py -model funnel-transformer/large -max_len 250 -batch_size 4 -scheduler cosine -lr 1e-5 -epochs 5 -gpu 0 1 -wd 0.01 -hidden_size 1024 -eval_steps 50 -use_dp -use_dropout 0.3 -fc_size 1024 -model_dir funnel_l_0702`
 
-Best RMSE in fold: 0 was: 0.4764 <br> run command above
-Best RMSE in fold: 1 was: 0.4870 <br> eval 10, drop 0.1 lr 2e-5 wd 0.01.  0.487 with pretrained
-Best RMSE in fold: 2 was: 0.4890 <br> eval 10, drop 0.1 lr 2e-5 wd 0.01
-Best RMSE in fold: 3 was: 0.4810 <br> run command above
-Best RMSE in fold: 4 was: 0.4880 <br> eval 10, drop 0.1 lr 2e-5 wd 0.01
+Best RMSE in fold: 0 was: 0.4764 run command above <br> 
+Best RMSE in fold: 1 was: 0.4870 eval 10, drop 0.1 lr 2e-5 wd 0.01.  0.487 with pretrained <br> 
+Best RMSE in fold: 2 was: 0.4890 eval 10, drop 0.1 lr 2e-5 wd 0.01 <br> 
+Best RMSE in fold: 3 was: 0.4810 run command above <br> 
+Best RMSE in fold: 4 was: 0.4880 eval 10, drop 0.1 lr 2e-5 wd 0.01 <br> 
 
 
 
