@@ -29,7 +29,7 @@ def objective(trial: Trial):
                     optimizer_name='AdamW',
                     loss_name=trial.suggest_categorical(name='loss_name',
                                                         choices=['rmse_loss', 'rmse_l1_loss']),
-                    lr=trial.suggest_float(name='lr', low=5e-6, high=5e-5),
+                    lr=trial.suggest_float(name='lr', low=5e-6, high=1e-5),
                     epochs=10,
                     scheduler=trial.suggest_categorical(name='scheduler',
                                                         choices=['linear_schedule_with_warmup',
