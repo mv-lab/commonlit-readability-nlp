@@ -346,6 +346,7 @@ class NLPModel(pl.LightningModule):
         self.loss_function = loss_factory(self.config.loss_name)
         self.valid_loss = rmse_loss
         self.mu = 0
+        self.validation_loss_calibrated = 10
 
     def get_model(self):
         model_config = AutoConfig.from_pretrained(self.config.model_name)
@@ -439,15 +440,16 @@ class NLPModel(pl.LightningModule):
         y_pred = torch.cat([o['y_pred'] for o in outputs], 0)
 
         loss = self.valid_loss(y_pred, y_true)
-        loss_calibrated = self.valid_loss(y_pred - self.mu, y_true)
+        validation_loss_calibrated = self.valid_loss(y_pred - self.mu, y_true)
+        self.validation_loss_calibrated = validation_loss_calibrated
 
         self.log('mu', self.mu, prog_bar=True)
         self.log('validation_loss', loss, prog_bar=True)
-        self.log('validation_loss_calibrated', loss_calibrated, prog_bar=True)
+        self.log('validation_loss_calibrated', validation_loss_calibrated, prog_bar=True)
 
         print(f'Intercept:{self.mu}')
         print(f'Validation loss after epoch {self.trainer.current_epoch}: {loss}')
-        print(f'Validation loss (calibrated) after epoch {self.trainer.current_epoch}: {loss_calibrated}')
+        print(f'Validation loss (calibrated) after epoch {self.trainer.current_epoch}: {validation_loss_calibrated}')
 
     def dict_loss(self, input_dict):
         logits = input_dict['logits']
@@ -481,6 +483,30 @@ class NLPModel(pl.LightningModule):
         return df
 
 
+class FittingError(ValueError):
+    pass
+
+
+class StopFitting(pl.callbacks.Callback):
+
+    def on_validation_end(self, trainer: 'pl.Trainer', pl_module: 'pl.LightningModule') -> None:
+        if pl_module.validation_loss_calibrated > 1.0 and trainer.current_epoch >= 1:
+            raise FittingError
+
+
+def stop_fitting(func):
+    def inner(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except FittingError:
+            return {'error': True,
+                    'loss': 10,
+                    'loss_calibrated': 10}
+
+    return inner
+
+
+@stop_fitting
 def fit(config: Config, df_train, df_test,
         data_module_class=NLPDataModule,
         model_class=NLPModel,
@@ -513,7 +539,7 @@ def fit(config: Config, df_train, df_test,
         checkpoint_callback = ModelCheckpoint(dirpath=dirpath,
                                               filename=config.to_str() + '_{epoch:02d}-{validation_loss:.2f}',
                                               monitor='validation_loss_calibrated')
-        callbacks = [checkpoint_callback]
+        callbacks = [checkpoint_callback, StopFitting()]
         if logger is not None:
             callbacks += [LearningRateMonitor(logging_interval='step', log_momentum=True)]
         trainer_params = dict(logger=logger,
@@ -527,7 +553,7 @@ def fit(config: Config, df_train, df_test,
                               num_sanity_val_steps=0,
                               min_epochs=1,
                               precision=config.precision,
-                              deterministic=True,
+                              deterministic=False,
                               gradient_clip_val=0.7,
                               reload_dataloaders_every_epoch=True)
 
@@ -561,13 +587,13 @@ def fit(config: Config, df_train, df_test,
 
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
-parser.add_argument('-model_name', type=str, default='roberta-base')
-parser.add_argument('-batch_size', type=int, default=8)
+parser.add_argument('-model_name', type=str, default='funnel-transformer/large')
+parser.add_argument('-batch_size', type=int, default=4)
 parser.add_argument('-optimizer_name', type=str, default='AdamW')
 parser.add_argument('-loss_name', type=str, default='rmse_l1_loss')
 parser.add_argument('-scheduler', type=str, default='linear_schedule_with_warmup')
 parser.add_argument('-accumulate_grad_batches', type=int, default=4)
-parser.add_argument('-lr', type=float, default=2.5e-5)
+parser.add_argument('-lr', type=float, default=3e-5)
 parser.add_argument('-epochs', type=int, default=10)
 
 args = parser.parse_args()

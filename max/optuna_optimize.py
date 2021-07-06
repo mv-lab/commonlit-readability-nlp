@@ -6,11 +6,19 @@ from pytorch_lightning.loggers import WandbLogger
 
 import wandb
 from optuna import Trial
-from fit_bert_with_mean_predictor import fit, Config
 import pytorch_lightning as pl
 
 
 def objective(trial: Trial):
+    from fit_bert_with_mean_predictor import fit, Config
+
+    try:
+        with open('key.txt') as f:
+            key = f.readline()
+        wandb.login(key=key)
+    except FileNotFoundError:
+        print('Not logging in to wandb - file no found')
+
     df_train = pd.read_csv('train_folds.csv')
     df_test = pd.read_csv('../input/test.csv')
 
@@ -38,8 +46,9 @@ def objective(trial: Trial):
     return_dict = fit(config=config,
                       overwrite_train_params=overwrite_train_params,
                       df_train=df_train,
-                      df_test=df_test,
-                      )
+                      df_test=df_test)
+    if hasattr(return_dict, 'error') and return_dict['error']:
+        return 100
 
     loss = return_dict['loss']
     print(return_dict['loss'])
@@ -65,13 +74,6 @@ def objective(trial: Trial):
 
 
 if __name__ == '__main__':
-    try:
-        with open('key.txt') as f:
-            key = f.readline()
-        wandb.login(key=key)
-    except FileNotFoundError:
-        print('Not logging in to wandb - file no found')
-
     df_train = pd.read_csv('train_folds.csv')
     df_test = pd.read_csv('../input/test.csv')
 
