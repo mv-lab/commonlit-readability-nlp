@@ -1,3 +1,4 @@
+import argparse
 import os
 import pickle
 import optuna
@@ -7,6 +8,10 @@ from pytorch_lightning.loggers import WandbLogger
 import wandb
 from optuna import Trial
 import pytorch_lightning as pl
+
+parser = argparse.ArgumentParser(description='Process pytorch params.')
+parser.add_argument('-model_name', type=str, default='funnel-transformer/large')
+args = parser.parse_args()
 
 
 def objective(trial: Trial):
@@ -22,7 +27,7 @@ def objective(trial: Trial):
     df_train = pd.read_csv('train_folds.csv')
     df_test = pd.read_csv('../input/test.csv')
 
-    config = Config(model_name='funnel-transformer/large',
+    config = Config(model_name=args.model_name,
                     batch_size=8,
                     precision=16,
                     accumulate_grad_batches=5,
@@ -83,5 +88,5 @@ if __name__ == '__main__':
                          'scheduler': 'linear_schedule_with_warmup',
                          "loss_name": 'rmse_loss'})
     study.optimize(objective, n_trials=75, catch=(Exception,))
-    with open('study.pkl', 'wb') as f:
+    with open(f'study_{args.model_name}.pkl', 'wb') as f:
         pickle.dump(study, f)
