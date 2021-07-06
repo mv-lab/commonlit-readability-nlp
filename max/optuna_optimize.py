@@ -24,7 +24,7 @@ def objective(trial: Trial):
 
     config = Config(model_name='funnel-transformer/large',
                     batch_size=8,
-                    precision=32,
+                    precision=16,
                     accumulate_grad_batches=5,
                     optimizer_name='AdamW',
                     loss_name=trial.suggest_categorical(name='loss_name',
