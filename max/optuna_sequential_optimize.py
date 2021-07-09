@@ -10,6 +10,7 @@ import pytorch_lightning as pl
 from optuna import Trial, Study
 from optuna.distributions import CategoricalDistribution, UniformDistribution, IntUniformDistribution
 from optuna.trial import FrozenTrial
+from pytorch_lightning.utilities.memory import garbage_collection_cuda
 
 import wandb
 from fit_bert_with_mean_predictor import fit, Config
@@ -39,6 +40,12 @@ class RemoveBadWeights:
             for weight in trial_to_remove.user_attrs.get('best_weights', []):
                 try:
                     os.remove(weight)
+                    with open(weight + '_removed.txt', 'w') as f:
+                        f.write(f'Removed with value {trial_to_remove.value}. \n'
+                                f'Best value so far: {study.best_trial.value} \n'
+                                f'Best paramers: {study.best_trial.params} \n'
+                                f'Stage: {trial_to_remove.user_attrs["stage"]} \n'
+                                f'Number of trials: {len(study.trials)}')
                 except Exception as e:
                     print(f'Could not remove {weight} due to {e}')
 
@@ -59,17 +66,19 @@ class Objective:
     possible_tuning_steps = {
         'optimizer_name': (CategoricalDistribution, ['AdamW', 'AdamWNoBias', 'AdamWDifferential']),
         'loss_name': (CategoricalDistribution, ['rmse_loss', 'rmse_l1_loss']),
-        'lr': (UniformDistribution, [2e-6, 3e-5]),
+        'lr': (UniformDistribution, [2e-6, 5e-5]),
         'scheduler': (CategoricalDistribution, ['linear_schedule_with_warmup', 'cosine',
                                                 'plateau', None]),
         'accumulate_grad_batches': (IntUniformDistribution, [1, 10])}
 
-    def __init__(self, params_to_tune):
+    def __init__(self, params_to_tune, stage):
         self.params_to_tune = params_to_tune
+        self.stage = stage
 
     def get_config(self, trial):
         best_params = self.get_best_parameters(trial)
         config = Config(model_name=args.model_name,
+                        root_dir='../../optuna_optimize_logs',
                         batch_size=8,
                         precision=16,
                         accumulate_grad_batches=best_params['accumulate_grad_batches'],
@@ -78,9 +87,7 @@ class Objective:
                         lr=best_params['lr'],
                         epochs=10,
                         scheduler=best_params['scheduler'],
-                        overwrite_train_params={'val_check_interval': 0.5,
-                                              #  'limit_train_batches': 20
-                                                }
+                        overwrite_train_params={'val_check_interval': 0.5}
                         )
         self.sample_parameters(config, trial)
         return config
@@ -116,8 +123,6 @@ class Objective:
 
     def fit(self, config: Config):
         df_train = pd.read_csv('train_folds.csv')
-        df_train = df_train.sample(0.1, seed=0)
-
         overwrite_train_params = config.overwrite_train_params
 
         pl.seed_everything(seed=config.seed)
@@ -125,7 +130,9 @@ class Objective:
         return_dict = fit(config=config,
                           overwrite_train_params=overwrite_train_params,
                           df_train=df_train,
-                          )
+                          project_name='optuna_testing')
+        garbage_collection_cuda()
+
         if hasattr(return_dict, 'error') and return_dict['error']:
             return 100
 
@@ -134,21 +141,30 @@ class Objective:
         print(return_dict['loss_calibrated'])
 
         df_oof = return_dict['df_oof']
-        df_test_preds = return_dict['df_test_preds']
 
         experiment_name = config.to_str() + f'oof_loss:_{loss}'
 
         oof_filepath = os.path.join(config.root_dir, 'df_oof_' + experiment_name + '.csv')
-        df_test_filepath = os.path.join(config.root_dir, 'df_test_preds_' + experiment_name + '.csv')
 
         df_oof.to_csv(oof_filepath, index=False)
-        df_test_preds.to_csv(df_test_filepath, index=False)
         return return_dict
+
+    def dummy_fit(self, config):
+        loss = np.random.random()
+        best_weight = f'optuna_testing/{loss}.txt'
+        os.makedirs('optuna_testing', exist_ok=True)
+
+        with open(best_weight, 'w') as f:
+            f.write(str(config.as_dict()))
+
+        return dict(loss=loss,
+                    best_weights=[best_weight])
 
     def __call__(self, trial: Trial):
         config = self.get_config(trial)
-        return_dict = self.fit(config)
+        return_dict = self.dummy_fit(config)
         trial.set_user_attr('best_weights', return_dict['best_weights'])
+        trial.set_user_attr('stage', self.stage)
         return return_dict['loss']
 
 
@@ -163,39 +179,45 @@ class NlpTuner:
         self.tune_accumulate_grad_batches()
         self.tune_rest()
 
+        best_trial = self.study.best_trial
+        print(f'Best value: {best_trial.value} \n'
+              f'Best paramers: {best_trial.params} \n'
+              f'Stage: {best_trial.user_attrs["stage"]} \n'
+              f'Number of trials: {len(self.study.trials)}')
+
     def tune_learning_rate(self, n_trials: int = 8) -> None:
         param_name = "lr"
-        param_values = np.linspace(5e-6, 5e-4, n_trials).tolist()
+        param_values = np.linspace(5e-6, 5e-5, n_trials).tolist()
 
         sampler = optuna.samplers.GridSampler({param_name: param_values})
         self.study.sampler = sampler
-        self.tune_params([param_name], len(param_values), name='initial_lr_finder')
+        self.tune_params([param_name], len(param_values), stage='initial_lr_finder')
 
     def tune_scheduler(self) -> None:
         param_name = "scheduler"
         param_values = ['linear_schedule_with_warmup', 'cosine', 'plateau', None]
 
-        sampler = optuna.samplers.GridSampler({param_name: param_values})
+        sampler = optuna.samplers.RandomSampler()
         self.study.sampler = sampler
-        self.tune_params([param_name], len(param_values), name='scheduler')
+        self.tune_params([param_name], len(param_values), stage='scheduler')
 
     def tune_accumulate_grad_batches(self) -> None:
         param_name = "accumulate_grad_batches"
         param_values = [1, 2, 5, 10, 20]
         sampler = optuna.samplers.GridSampler({param_name: param_values})
         self.study.sampler = sampler
-        self.tune_params([param_name], len(param_values), name='accumulate_grad_batches')
+        self.tune_params([param_name], len(param_values), stage='accumulate_grad_batches')
 
     def tune_rest(self) -> None:
         params = ["optimizer_name", "lr"]
         sampler = optuna.samplers.TPESampler(multivariate=True, group=True)
         self.study.sampler = sampler
-        self.tune_params(params, 20, name='tune_rest')
+        self.tune_params(params, 20, stage='tune_rest')
 
-    def tune_params(self, params_to_tune, n_trials, name=''):
-        objective = Objective(params_to_tune)
+    def tune_params(self, params_to_tune, n_trials, stage=''):
+        objective = Objective(params_to_tune, stage=stage)
         self.study.optimize(objective, n_trials, callbacks=[RemoveBadWeights(num_models_to_save=4)])
-        with open(f'study_{args.model_name}_{name}.pkl', 'wb') as f:
+        with open(f'study_{args.model_name}_{stage}.pkl', 'wb') as f:
             pickle.dump(self.study, f)
 
 
