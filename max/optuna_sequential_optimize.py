@@ -143,9 +143,8 @@ class Objective:
         df_oof = return_dict['df_oof']
 
         experiment_name = config.to_str() + f'oof_loss:_{loss}'
-
+        experiment_name = experiment_name.replace('/', '_')
         oof_filepath = os.path.join(config.root_dir, 'df_oof_' + experiment_name + '.csv')
-
         df_oof.to_csv(oof_filepath, index=False)
         return return_dict
 
