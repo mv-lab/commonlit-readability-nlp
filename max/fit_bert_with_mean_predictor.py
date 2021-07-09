@@ -522,8 +522,8 @@ def fit(config: Config, df_train, df_test=None,
         data_module_class=NLPDataModule,
         model_class=NLPModel,
         overwrite_train_params=None,
-        logger_class=WandbLogger
-        ):
+        logger_class=WandbLogger,
+        project_name='CommonlitReadabilityTrain'):
     dfs_oof = []
     best_weights = []
     logger = None
@@ -531,7 +531,7 @@ def fit(config: Config, df_train, df_test=None,
     if logger_class == WandbLogger:
         logger = logger_class(
             name=f'mean_pred_{config.model_name}_{config.lr}_{config.scheduler}_{datetime.datetime.now()}',
-            project='CommonlitReadabilityTrain',
+            project=project_name,
             job_type='train')
         logger.experiment.log(config.as_dict())
         logger.experiment.save('fit_bert_with_mean_predictor.py')
@@ -586,6 +586,7 @@ def fit(config: Config, df_train, df_test=None,
 
     if isinstance(logger, WandbLogger):
         logger.experiment.log({'oof_rsme': loss, 'oof_rmse_calibrated': loss_calibrated})
+        experiment_name = config.to_str() + f'oof_loss:_{loss}'
         wandb_fn = 'df_oof_' + experiment_name + '.csv'
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(wandb_fn)
