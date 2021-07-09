@@ -588,6 +588,7 @@ def fit(config: Config, df_train, df_test=None,
         logger.experiment.log({'oof_rsme': loss, 'oof_rmse_calibrated': loss_calibrated})
         experiment_name = config.to_str() + f'oof_loss:_{loss}'
         wandb_fn = 'df_oof_' + experiment_name + '.csv'
+        wandb_fn.replace('/', '_')
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(wandb_fn)
     logger.experiment.finish()
