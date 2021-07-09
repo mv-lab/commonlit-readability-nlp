@@ -171,7 +171,7 @@ class Objective:
 
 class NlpTuner:
 
-    def __init__(self, df_train, num_trials=-1, time_budget=1e6, ):
+    def __init__(self, df_train, num_trials=-1, time_budget=60 * 60 * 24 * 7):
         self.df_train = df_train
         self.num_trials = num_trials
         self.time_budget = time_budget
