@@ -512,8 +512,8 @@ def stop_fitting(func):
         except FittingError:
             return {'error': True,
                     'loss': 10,
+                    'best_weights': [],
                     'loss_calibrated': 10}
-
     return inner
 
 
@@ -592,7 +592,7 @@ def fit(config: Config, df_train, df_test,
         wandb_fn = 'df_oof_' + experiment_name + '.csv'
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(wandb_fn)
-
+    logger.experiment.finish()
     return {'df_oof': df_oof,
             'df_test_preds': df_test_preds,
             'best_weights': best_weights,

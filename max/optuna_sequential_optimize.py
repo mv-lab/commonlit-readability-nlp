@@ -1,13 +1,15 @@
 import argparse
 import os
 import pickle
+from typing import List
 
 import numpy as np
 import optuna
 import pandas as pd
 import pytorch_lightning as pl
-from optuna import Trial
+from optuna import Trial, Study
 from optuna.distributions import CategoricalDistribution, UniformDistribution, IntUniformDistribution
+from optuna.trial import FrozenTrial
 
 import wandb
 from fit_bert_with_mean_predictor import fit, Config
@@ -24,6 +26,35 @@ parser.add_argument('-model_name', type=str, default='funnel-transformer/large')
 args = parser.parse_args()
 
 
+class RemoveBadWeights:
+
+    def __init__(self, num_models_to_save=5):
+        self.num_models_to_save = num_models_to_save
+
+    def __call__(self,
+                 study: Study,
+                 frozentrial: FrozenTrial):
+        trials_to_remove = self.get_trials_to_remove(study)
+        for trial_to_remove in trials_to_remove:
+            for weight in trial_to_remove.user_attrs.get('best_weights', []):
+                try:
+                    os.remove(weight)
+                except Exception as e:
+                    print(f'Could not remove {weight} due to {e}')
+
+    def get_trials_to_remove(self, study) -> List[Trial]:
+        completed_trials = [trial for trial in study.trials if trial.value is not None]
+        sorted_trials_ids = np.array([trial.number for trial in completed_trials])[np.argsort([trial.value
+                                                                                               for trial in
+                                                                                               completed_trials])]
+        best_id = study.best_trial._trial_id
+        assert best_id == sorted_trials_ids[0] or best_id == sorted_trials_ids[-1]
+        if best_id == sorted_trials_ids[-1]:
+            sorted_trials_ids = sorted_trials_ids[::-1]
+        trial_ids_to_remove = sorted_trials_ids[self.num_models_to_save:]
+        return [trial for trial in study.trials if trial.number in trial_ids_to_remove]
+
+
 class NlpTuner:
 
     def __init__(self):
@@ -33,6 +64,7 @@ class NlpTuner:
         self.tune_learning_rate()
         self.tune_scheduler()
         self.tune_accumulate_grad_batches()
+        self.tune_rest()
 
     def tune_learning_rate(self, n_trials: int = 8) -> None:
         param_name = "lr"
@@ -58,7 +90,7 @@ class NlpTuner:
         self.tune_params([param_name], len(param_values), name='accumulate_grad_batches')
 
     def tune_rest(self) -> None:
-        params = ["accumulate_grad_batches"]
+        params = ["optimizer_name", "lr"]
         sampler = optuna.samplers.TPESampler(multivariate=True, group=True)
         self.study.sampler = sampler
         self.tune_params(params, 20, name='tune_rest')
@@ -107,10 +139,11 @@ class NlpTuner:
 
                 setattr(config, param, suggestion)
 
-            loss = self.objective(config)
-            return loss
+            return_dict = self.objective(config)
+            trial.set_user_attr('best_weights', return_dict['best_weights'])
+            return return_dict['loss']
 
-        self.study.optimize(objective, n_trials)
+        self.study.optimize(objective, n_trials, callbacks=[RemoveBadWeights(num_models_to_save=4)])
         with open(f'study_{args.model_name}_{name}.pkl', 'wb') as f:
             pickle.dump(self.study, f)
 
@@ -143,9 +176,13 @@ class NlpTuner:
 
         df_oof.to_csv(oof_filepath, index=False)
         df_test_preds.to_csv(df_test_filepath, index=False)
-        return loss
+        return return_dict
 
 
 if __name__ == '__main__':
     tuner = NlpTuner()
-    tuner.run()
+    try:
+        tuner.run()
+    except KeyboardInterrupt:
+        with open(f'study_{args.model_name}_interruped.pkl', 'wb') as f:
+            pickle.dump(tuner.study, f)
