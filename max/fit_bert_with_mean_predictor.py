@@ -469,6 +469,7 @@ class NLPModel(pl.LightningModule):
 
     def get_prediction_df(self, dataloader):
         self.model.to('cuda:0')
+        self.model.eval()
         self.calibrate()
         return_dicts = self.trainer.predict(dataloaders=dataloader)
         keys = return_dicts[0].keys()
