@@ -29,6 +29,10 @@ from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
+import torch.multiprocessing
+
+torch.multiprocessing.set_sharing_strategy('file_system')
+
 
 @dataclass
 class Config:
@@ -514,6 +518,7 @@ def stop_fitting(func):
                     'loss': 10,
                     'best_weights': [],
                     'loss_calibrated': 10}
+
     return inner
 
 
