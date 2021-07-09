@@ -130,7 +130,7 @@ class Objective:
         return_dict = fit(config=config,
                           overwrite_train_params=overwrite_train_params,
                           df_train=df_train,
-                          project_name='optuna_testing')
+                          project_name='optuna_optimizing_roberta-large-finetuned-race')
         garbage_collection_cuda()
 
         if hasattr(return_dict, 'error') and return_dict['error']:
@@ -162,7 +162,7 @@ class Objective:
 
     def __call__(self, trial: Trial):
         config = self.get_config(trial)
-        return_dict = self.dummy_fit(config)
+        return_dict = self.fit(config)
         trial.set_user_attr('best_weights', return_dict['best_weights'])
         trial.set_user_attr('stage', self.stage)
         return return_dict['loss']
