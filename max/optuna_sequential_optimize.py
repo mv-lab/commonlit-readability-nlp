@@ -55,6 +55,67 @@ class RemoveBadWeights:
         return [trial for trial in study.trials if trial.number in trial_ids_to_remove]
 
 
+class Objective:
+    possible_tuning_steps = {
+        'optimizer_name': (CategoricalDistribution, ['AdamW', 'AdamWNoBias', 'AdamWDifferential']),
+        'loss_name': (CategoricalDistribution, ['rmse_loss', 'rmse_l1_loss']),
+        'lr': (UniformDistribution, [2e-6, 3e-5]),
+        'scheduler': (CategoricalDistribution, ['linear_schedule_with_warmup', 'cosine',
+                                                'plateau', None]),
+        'accumulate_grad_batches': (IntUniformDistribution, [1, 10])}
+
+    def __init__(self, params_to_tune, fit_function):
+        self.params_to_tune = params_to_tune
+        self.fit_function = fit_function
+
+    def get_config(self, trial):
+        best_params = self.get_best_parameters(trial)
+        config = Config(model_name=args.model_name,
+                        batch_size=best_params['batch_size'],
+                        precision=16,
+                        accumulate_grad_batches=best_params['accumulate_grad_batches'],
+                        optimizer_name=best_params['optimizer_name'],
+                        loss_name=best_params['loss_name'],
+                        lr=best_params['lr'],
+                        epochs=10,
+                        scheduler=best_params['scheduler'],
+                        overwrite_train_params={'val_check_interval': 0.5}
+                        )
+        self.sample_parameters(config, trial)
+        return config
+
+    def sample_parameters(self, config, trial):
+        for parameter in self.params_to_tune:
+            distribution, values = self.possible_tuning_steps[parameter]
+            if isinstance(distribution, CategoricalDistribution):
+                suggestion = trial.suggest_categorical(parameter, values)
+            elif isinstance(distribution, UniformDistribution):
+                suggestion = trial.suggest_float(parameter, low=values[0], high=values[1])
+            elif isinstance(distribution, IntUniformDistribution):
+                suggestion = trial.suggest_int(parameter, low=values[0], high=values[1])
+            else:
+                raise NotImplementedError
+            setattr(config, parameter, suggestion)
+
+    def get_best_parameters(self, trial):
+        best_trial = trial.study.best_trial
+        best_params = dict(optimizer_name='AdamW',
+                           loss_name='rmse_loss',
+                           lr=2e-5,
+                           scheduler='linear_schedule_with_warmup',
+                           accumulate_grad_batches=5)
+        if best_trial is not None:
+            for parameter in self.possible_tuning_steps:
+                best_params[parameter] = best_trial.params.get(parameter, best_params[parameter])
+        return best_params
+
+    def __call__(self, trial: Trial):
+        config = self.get_config(trial)
+        return_dict = self.fit_function(config)
+        trial.set_user_attr('best_weights', return_dict['best_weights'])
+        return return_dict['loss']
+
+
 class NlpTuner:
 
     def __init__(self):
@@ -95,59 +156,13 @@ class NlpTuner:
         self.study.sampler = sampler
         self.tune_params(params, 20, name='tune_rest')
 
-    def tune_params(self, params, n_trials, name=''):
-        possible_tuning_steps = {
-            'optimizer_name': (CategoricalDistribution, ['AdamW', 'AdamWNoBias', 'AdamWDifferential']),
-            'loss_name': (CategoricalDistribution, ['rmse_loss', 'rmse_l1_loss']),
-            'lr': (UniformDistribution, [2e-6, 3e-5]),
-            'scheduler': (CategoricalDistribution, ['linear_schedule_with_warmup', 'cosine',
-                                                    'plateau', None]),
-            'accumulate_grad_batches': (IntUniformDistribution, [1, 10])}
-        best_trial = self.study.best_trial
-        best_params = dict(optimizer_name='AdamW',
-                           loss_name='rmse_loss',
-                           lr=2e-5,
-                           scheduler='linear_schedule_with_warmup',
-                           accumulate_grad_batches=5)
-        if best_trial is not None:
-            for param in possible_tuning_steps:
-                if param:
-                    best_params[param] = getattr(best_trial, param)
-
-        def objective(trial: Trial):
-            config = Config(model_name=args.model_name,
-                            batch_size=best_params['batch_size'],
-                            precision=16,
-                            accumulate_grad_batches=best_params['accumulate_grad_batches'],
-                            optimizer_name=best_params['optimizer_name'],
-                            loss_name=best_params['loss_name'],
-                            lr=best_params['lr'],
-                            epochs=10,
-                            scheduler=best_params['scheduler'],
-                            overwrite_train_params={'val_check_interval': 0.5}
-                            )
-            for param in params:
-                distribution, values = possible_tuning_steps[param]
-                if isinstance(distribution, CategoricalDistribution):
-                    suggestion = trial.suggest_categorical(param, values)
-                elif isinstance(distribution, UniformDistribution):
-                    suggestion = trial.suggest_float(param, low=values[0], high=values[1])
-                elif isinstance(distribution, IntUniformDistribution):
-                    suggestion = trial.suggest_int(param, low=values[0], high=values[1])
-                else:
-                    raise NotImplementedError
-
-                setattr(config, param, suggestion)
-
-            return_dict = self.objective(config)
-            trial.set_user_attr('best_weights', return_dict['best_weights'])
-            return return_dict['loss']
-
+    def tune_params(self, params_to_tune, n_trials, name=''):
+        objective = Objective(params_to_tune, self.fit)
         self.study.optimize(objective, n_trials, callbacks=[RemoveBadWeights(num_models_to_save=4)])
         with open(f'study_{args.model_name}_{name}.pkl', 'wb') as f:
             pickle.dump(self.study, f)
 
-    def objective(self, config: Config):
+    def fit(self, config: Config):
         df_train = pd.read_csv('train_folds.csv')
         df_test = pd.read_csv('../input/test.csv')
 
