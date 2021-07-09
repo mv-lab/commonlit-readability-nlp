@@ -93,10 +93,20 @@ def optimizer_factory(optimizer_name, model, lr):
             {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
             {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
-        optimizer = transformers.AdamW(optimizer_grouped_parameters, lr=lr)  # NOQA
+        optimizer = transformers.AdamW(optimizer_grouped_parameters, lr=lr)
+
+    elif optimizer_name == 'AdamWNoBias':
+        param_optimizer = list(model.named_parameters())
+        no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight', 'word_embeddings.weight']
+
+        optimizer_grouped_parameters = [
+            {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+            {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        ]
+        optimizer = transformers.AdamW(optimizer_grouped_parameters, lr=lr, correct_bias=False)
 
     elif optimizer_name == 'AdamWNoDecay':
-        optimizer = transformers.AdamW(model.parameters(), lr=lr)  # NOQA
+        optimizer = transformers.AdamW(model.parameters(), lr=lr)
 
     elif optimizer_name == 'AdamWDifferential':
         # differential learning rate and weight decay

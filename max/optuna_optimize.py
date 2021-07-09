@@ -75,6 +75,8 @@ def objective(trial: Trial):
         wandb_fn = 'df_oof_' + experiment_name + '.csv'
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(oof_filepath)
+        logger.experiment.finish()
+
     return loss
 
 
