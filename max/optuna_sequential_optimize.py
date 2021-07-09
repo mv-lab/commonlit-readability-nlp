@@ -72,9 +72,10 @@ class Objective:
                                                 'plateau', None]),
         'accumulate_grad_batches': (IntUniformDistribution, [1, 10])}
 
-    def __init__(self, params_to_tune, stage):
+    def __init__(self, df_train, params_to_tune, stage):
         self.params_to_tune = params_to_tune
         self.stage = stage
+        self.df_train = df_train
 
     def get_config(self, trial):
         best_params = self.get_best_parameters(trial)
@@ -123,14 +124,13 @@ class Objective:
         return best_params
 
     def fit(self, config: Config):
-        df_train = pd.read_csv('train_folds.csv')
         overwrite_train_params = config.overwrite_train_params
 
         pl.seed_everything(seed=config.seed)
 
         return_dict = fit(config=config,
                           overwrite_train_params=overwrite_train_params,
-                          df_train=df_train,
+                          df_train=self.df_train,
                           project_name='optuna_optimizing_roberta-large-finetuned-race')
         garbage_collection_cuda()
 
@@ -170,7 +170,8 @@ class Objective:
 
 class NlpTuner:
 
-    def __init__(self, num_trials=-1, time_budget=1e6, ):
+    def __init__(self, df_train, num_trials=-1, time_budget=1e6, ):
+        self.df_train = df_train
         self.num_trials = num_trials
         self.time_budget = time_budget
         self.completed_trials = 0
@@ -220,7 +221,7 @@ class NlpTuner:
     def tune_params(self, params_to_tune, n_trials, stage=''):
         study_name = f'study_{args.model_name}_{stage}.pkl'
         if self.num_trials > 0 and self.completed_trials < self.num_trials:
-            objective = Objective(params_to_tune, stage=stage)
+            objective = Objective(self.df_train, params_to_tune, stage=stage)
             t_0 = time.time()
             self.study.optimize(objective, n_trials, timeout=self.time_budget,
                                 callbacks=[RemoveBadWeights(num_models_to_save=4)],
@@ -234,7 +235,7 @@ class NlpTuner:
 
 
 if __name__ == '__main__':
-    tuner = NlpTuner()
+    tuner = NlpTuner(df_train=pd.read_csv('train_folds.csv'))
     try:
         tuner.run()
     except KeyboardInterrupt:
