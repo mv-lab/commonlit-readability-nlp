@@ -588,6 +588,10 @@ def fit(config: Config, df_train, df_test,
 
     if isinstance(logger, WandbLogger):
         logger.experiment.log({'oof_rsme': loss, 'oof_rmse_calibrated': loss_calibrated})
+        wandb_fn = 'df_oof_' + experiment_name + '.csv'
+        df_oof.to_csv(wandb_fn, index=False)
+        logger.experiment.save(wandb_fn)
+
     return {'df_oof': df_oof,
             'df_test_preds': df_test_preds,
             'best_weights': best_weights,
@@ -636,8 +640,7 @@ if __name__ == '__main__':
     return_dict = fit(config=config,
                       overwrite_train_params=overwrite_train_params,
                       df_train=df_train,
-                      df_test=df_test,
-                      )
+                      df_test=df_test)
 
     loss = return_dict['loss']
     print(return_dict['loss'])
@@ -653,9 +656,3 @@ if __name__ == '__main__':
 
     df_oof.to_csv(oof_filepath, index=False)
     df_test_preds.to_csv(df_test_filepath, index=False)
-
-    logger = return_dict['logger']
-    if isinstance(logger, WandbLogger):
-        wandb_fn = 'df_oof_' + experiment_name + '.csv'
-        df_oof.to_csv(wandb_fn, index=False)
-        logger.experiment.save(wandb_fn)
