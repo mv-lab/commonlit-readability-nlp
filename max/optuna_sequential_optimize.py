@@ -1,6 +1,7 @@
 import argparse
 import os
 import pickle
+import time
 from typing import List
 
 import numpy as np
@@ -169,7 +170,10 @@ class Objective:
 
 class NlpTuner:
 
-    def __init__(self):
+    def __init__(self, num_trials=-1, time_budget=1e6, ):
+        self.num_trials = num_trials
+        self.time_budget = time_budget
+        self.completed_trials = 0
         self.study = optuna.create_study(storage=None, direction='minimize')
 
     def run(self) -> None:
@@ -214,9 +218,18 @@ class NlpTuner:
         self.tune_params(params, 20, stage='tune_rest')
 
     def tune_params(self, params_to_tune, n_trials, stage=''):
-        objective = Objective(params_to_tune, stage=stage)
-        self.study.optimize(objective, n_trials, callbacks=[RemoveBadWeights(num_models_to_save=4)])
-        with open(f'study_{args.model_name}_{stage}.pkl', 'wb') as f:
+        study_name = f'study_{args.model_name}_{stage}.pkl'
+        if self.num_trials > 0 and self.completed_trials < self.num_trials:
+            objective = Objective(params_to_tune, stage=stage)
+            t_0 = time.time()
+            self.study.optimize(objective, n_trials, timeout=self.time_budget,
+                                callbacks=[RemoveBadWeights(num_models_to_save=4)],
+                                gc_after_trial=True)
+            self.time_budget -= time.time() - t_0
+            self.completed_trials += n_trials
+        else:
+            study_name = 'not_tuned_not_enough_trials_left_' + study_name
+        with open(study_name, 'wb') as f:
             pickle.dump(self.study, f)
 
 
