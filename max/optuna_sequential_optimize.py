@@ -221,7 +221,7 @@ class NlpTuner:
 
     def tune_params(self, params_to_tune, n_trials, stage=''):
         study_name = f'study_{args.model_name}_{stage}.pkl'
-        if self.num_trials > 0 and self.completed_trials < self.num_trials:
+        if (self.num_trials > 0 and self.completed_trials < self.num_trials) or self.num_trials < 0:
             objective = Objective(self.df_train, params_to_tune, stage=stage)
             t_0 = time.time()
             self.study.optimize(objective, n_trials, timeout=self.time_budget,
