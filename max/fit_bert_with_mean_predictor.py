@@ -518,14 +518,13 @@ def stop_fitting(func):
 
 
 @stop_fitting
-def fit(config: Config, df_train, df_test,
+def fit(config: Config, df_train, df_test=None,
         data_module_class=NLPDataModule,
         model_class=NLPModel,
         overwrite_train_params=None,
         logger_class=WandbLogger
         ):
     dfs_oof = []
-    dfs_test_preds = []
     best_weights = []
     logger = None
 
@@ -579,10 +578,8 @@ def fit(config: Config, df_train, df_test,
         model.load_state_dict(torch.load(checkpoint_path)['state_dict'])
 
         dfs_oof += [model.get_prediction_df(datamodule.val_dataloader())]
-        dfs_test_preds += [model.get_prediction_df(datamodule.test_dataloader())]
 
     df_oof = pd.concat(dfs_oof)
-    df_test_preds = pd.concat(dfs_test_preds)
 
     loss = np.sqrt(np.mean((df_oof[config.target_column_name] - df_oof['logits']) ** 2))
     loss_calibrated = np.sqrt(np.mean((df_oof[config.target_column_name] + df_oof['mu'] - df_oof['logits']) ** 2))
@@ -594,7 +591,6 @@ def fit(config: Config, df_train, df_test,
         logger.experiment.save(wandb_fn)
     logger.experiment.finish()
     return {'df_oof': df_oof,
-            'df_test_preds': df_test_preds,
             'best_weights': best_weights,
             'loss': loss,
             'loss_calibrated': loss_calibrated,
@@ -622,7 +618,6 @@ if __name__ == '__main__':
         print('Not logging in to wandb - file no found')
 
     df_train = pd.read_csv('train_folds.csv')
-    df_test = pd.read_csv('../input/test.csv')
 
     config = Config(model_name=args.model_name,
                     batch_size=args.batch_size,
@@ -640,15 +635,13 @@ if __name__ == '__main__':
 
     return_dict = fit(config=config,
                       overwrite_train_params=overwrite_train_params,
-                      df_train=df_train,
-                      df_test=df_test)
+                      df_train=df_train)
 
     loss = return_dict['loss']
     print(return_dict['loss'])
     print(return_dict['loss_calibrated'])
 
     df_oof = return_dict['df_oof']
-    df_test_preds = return_dict['df_test_preds']
 
     experiment_name = config.to_str() + f'oof_loss:_{loss}'
 
@@ -656,4 +649,3 @@ if __name__ == '__main__':
     df_test_filepath = os.path.join(config.root_dir, 'df_test_preds_' + experiment_name + '.csv')
 
     df_oof.to_csv(oof_filepath, index=False)
-    df_test_preds.to_csv(df_test_filepath, index=False)
