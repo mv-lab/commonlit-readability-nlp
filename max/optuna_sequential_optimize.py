@@ -146,6 +146,7 @@ class Objective:
         experiment_name = config.to_str() + f'oof_loss:_{loss}'
         experiment_name = experiment_name.replace('/', '_')
         oof_filepath = os.path.join(config.root_dir, 'df_oof_' + experiment_name + '.csv')
+        os.makedirs(os.path.dirname(oof_filepath), exist_ok=True)
         df_oof.to_csv(oof_filepath, index=False)
         return return_dict
 
@@ -230,6 +231,8 @@ class NlpTuner:
             self.completed_trials += n_trials
         else:
             study_name = 'not_tuned_not_enough_trials_left_' + study_name
+
+        os.makedirs(os.path.dirname(study_name), exist_ok=True)
         with open(study_name, 'wb') as f:
             pickle.dump(self.study, f)
 
