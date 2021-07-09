@@ -340,7 +340,7 @@ class NLPDataModule(pl.LightningDataModule):
         return DataLoader(input_dict,
                           batch_size=self.batch_size,
                           collate_fn=TextCollate(tokenizer=self.tokenizer),
-                          num_workers=1,
+                          num_workers=8,
                           shuffle=True if mode == 'train' else False)
 
 
