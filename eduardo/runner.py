@@ -18,7 +18,8 @@ FOLD_PATH = DATA_PATH + '/los_folds.csv'
 
 device = 'cuda'
 
-def run(fold, config):
+
+def run(fold, model_num, config):
     # Load CommonLit train dataset
     train = pd.read_csv(FOLD_PATH)
     # Add the sample with target 0 to all the folds
@@ -34,6 +35,7 @@ def run(fold, config):
 
     # Keep track of best model so far
     curr_best = config['curr_best']
+    curr_best_calibrated = 1e15
 
     # Statistics gatherer
     stats = TrainingStats()
@@ -48,7 +50,12 @@ def run(fold, config):
                                                               num_bins=config['num_bins'],
                                                               repeats=config['repeats'],
                                                               pct_pairs=config['pct_pairs'],
-                                                              pct_pairs_split=config['pct_pairs_split'])
+                                                              pct_simple=config['pct_simple'],
+                                                              pct_pairs_split=config['pct_pairs_split'],
+                                                              frac_science=config['frac_science'],
+                                                              frac_books=config['frac_books'],
+                                                              num_base_samples=config['num_base_samples'],
+                                                              augment=config['augment'])
 
     # Load model, num_labels=1 specifies a regression with MSE loss
     module_config = AutoConfig.from_pretrained(config['pretrained_model_name_or_path'])
@@ -93,18 +100,32 @@ def run(fold, config):
 
                 stats.total_eval_loss = 0
 
+                logits_calibrate = []
+                y_true_calibrate = []
+
                 for batch_valid in valid_dataloader:
                     # Avoid gradient updates
                     with torch.no_grad():
                         out = model(batch_valid)
-
                         loss = out['loss']
+                        y_true_calibrate.append(batch_valid['labels'].cpu().numpy())
+                        logits_calibrate.append(out['logits'].cpu().numpy())
 
                     stats.update_eval(loss.item(),
                                       config['batch_size'] * count_batches,
                                       len(valid_dataloader),
                                       optimizer.param_groups[0]["lr"],
                                       batch['task_name'])
+
+                logits_calibrate = np.concatenate(logits_calibrate, 0)
+                y_true_calibrate = np.concatenate(y_true_calibrate, 0)
+                mid_point = logits_calibrate[np.where(y_true_calibrate == 0)][0]
+                mu, sigma = norm.fit(logits_calibrate - y_true_calibrate)
+
+                rmse_calibrated = mean_squared_error(logits_calibrate - mu, y_true_calibrate, squared=False)
+                stats.rmse_calibrated = rmse_calibrated
+                stats.mid_point = mid_point
+                stats.mu = mu
 
                 if config['do_early_stop']:
                     if stats.avg_commonlit_train_loss < config['early_stop_loss']:
@@ -116,10 +137,12 @@ def run(fold, config):
                 if stats.avg_val_loss < curr_best:
                     curr_best = stats.avg_val_loss
                     print('\n**************************')
-                    print('Fold: ', fold, '| lr: ', optimizer.param_groups[0]["lr"], ' | rmse: ', np.sqrt(curr_best),
-                          '| mse: ', curr_best, '| task: ', batch['task_name'])
+                    print('Fold: ', fold, ' | rmse: ', np.sqrt(curr_best),
+                          ' | rmse calib: ', rmse_calibrated, '| mse: ', curr_best, ' | mu: ', mu, ' | midpoint: ',
+                          mid_point, '| task: ', batch['task_name'])
                     print('**************************\n')
-                    model.model.save_pretrained(config['output_file_name'] + str(fold))
+                    model.model.save_pretrained(
+                        config['output_file_name'] + 'fold' + str(fold) + 'model' + str(model_num))
 
             # ========================================
             #               Training
@@ -139,4 +162,5 @@ def run(fold, config):
 
             optimizer.step()
             scheduler.step()
+
 

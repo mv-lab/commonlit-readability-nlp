@@ -22,8 +22,10 @@ class CommonlitModel(PreTrainedModel):
             for param in self.model.roberta.parameters():
                 param.requires_grad = False
 
-        self.ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['margin'])
-        self.margin = config['margin']
+        self.books_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['books_margin'])
+        self.science_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['science_margin'])
+        self.simple_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['simple_margin'])
+        self.pairs_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['pairs_margin'])
 
         # torch.nn.init.normal_(self.classifier.weight, std=0.02)
 
@@ -32,7 +34,7 @@ class CommonlitModel(PreTrainedModel):
         diff = None
 
         # Calculate MSE loss for single text batch sample
-        if batch['task_name'] == 'commonlit':
+        if batch['task_name'] in ['commonlit', 'commonlit_base', 'augmented_commonlit']:
 
             b_input_ids = batch['input_ids'].to(device)
             b_input_mask = batch['attention_masks'].to(device)
@@ -72,7 +74,7 @@ class CommonlitModel(PreTrainedModel):
             logits = out1['logits']  # For output
 
             # Loss is cross-entropy with implied probability from Commonlit target
-            if batch['task_name'] == 'commonlit_pairs':
+            if batch['task_name'] in ['commonlit_pairs', 'commonlit_base_pairs']:
 
                 loss = self.cross_entropy(logits1.view(-1, 1),
                                           logits2.view(-1, 1),
@@ -86,21 +88,26 @@ class CommonlitModel(PreTrainedModel):
 
                 if batch['task_name'] == 'commonlit_pairs_split':
                     # Convert logit target difference to -1/1 for correct Ranking Loss
-                    loss = self.ranking_loss_fn(logits1.view(-1, 1),
-                                                logits2.view(-1, 1),
-                                                2 * (b_labels_1 > b_labels_2).float() - 1)
+                    loss = self.pairs_ranking_loss_fn(logits1.view(-1, 1),
+                                                      logits2.view(-1, 1),
+                                                      2 * (b_labels_1 > b_labels_2).float() - 1)
 
                 if batch['task_name'] == 'simple':
+                    loss = self.simple_ranking_loss_fn(logits1.view(-1, 1),
+                                                       logits2.view(-1, 1),
+                                                       b_labels_1)
 
-                    loss = self.ranking_loss_fn(logits1.view(-1, 1),
-                                                logits2.view(-1, 1),
-                                                b_labels_1)
+                if batch['task_name'] == 'books':
 
-                elif batch['task_name'] == 'books':
+                    loss = self.books_ranking_loss_fn(logits1.view(-1, 1),
+                                                      logits2.view(-1, 1),
+                                                      b_labels_1)
 
-                    loss = self.ranking_loss_fn(logits1.view(-1, 1),
-                                                logits2.view(-1, 1),
-                                                b_labels_1)
+                elif batch['task_name'] == 'science':
+
+                    loss = self.science_ranking_loss_fn(logits1.view(-1, 1),
+                                                        logits2.view(-1, 1),
+                                                        b_labels_1)
 
                 diff = (logits1 > logits2).float().sum()
 
@@ -141,8 +148,10 @@ class CommonlitCustomHeadModelInit(PreTrainedModel):
 
         self.head = RobertaHead(self.hidden_size, 1)
         self.mse_loss_fn = torch.nn.MSELoss()
-        self.ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['margin'])
-        self.margin = config['margin']
+        self.books_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['books_margin'])
+        self.science_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['science_margin'])
+        self.simple_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['simple_margin'])
+        self.pairs_ranking_loss_fn = torch.nn.MarginRankingLoss(margin=config['pairs_margin'])
 
         # torch.nn.init.normal_(self.classifier.weight, std=0.02)
 
@@ -235,21 +244,26 @@ class CommonlitCustomHeadModelInit(PreTrainedModel):
 
                 if batch['task_name'] == 'commonlit_pairs_split':
                     # Convert logit target difference to -1/1 for correct Ranking Loss
-                    loss = self.ranking_loss_fn(logits1.view(-1, 1),
-                                                logits2.view(-1, 1),
-                                                2 * (b_labels_1 > b_labels_2).float() - 1)
+                    loss = self.pairs_ranking_loss_fn(logits1.view(-1, 1),
+                                                      logits2.view(-1, 1),
+                                                      2 * (b_labels_1 > b_labels_2).float() - 1)
 
                 if batch['task_name'] == 'simple':
+                    loss = self.simple_ranking_loss_fn(logits1.view(-1, 1),
+                                                       logits2.view(-1, 1),
+                                                       b_labels_1)
 
-                    loss = self.ranking_loss_fn(logits1.view(-1, 1),
-                                                logits2.view(-1, 1),
-                                                b_labels_1)
+                if batch['task_name'] == 'books':
 
-                elif batch['task_name'] == 'books':
+                    loss = self.books_ranking_loss_fn(logits1.view(-1, 1),
+                                                      logits2.view(-1, 1),
+                                                      b_labels_1)
 
-                    loss = self.ranking_loss_fn(logits1.view(-1, 1),
-                                                logits2.view(-1, 1),
-                                                b_labels_1)
+                elif batch['task_name'] == 'science':
+
+                    loss = self.science_ranking_loss_fn(logits1.view(-1, 1),
+                                                        logits2.view(-1, 1),
+                                                        b_labels_1)
 
                 diff = (logits1 > logits2 + self.margin).float().sum()
 

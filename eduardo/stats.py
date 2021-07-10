@@ -13,22 +13,30 @@ class TrainingStats:
         self.total_eval_loss = 0
         self.total_simple_loss = 0
         self.total_books_loss = 0
+        self.total_science_loss = 0
         self.total_split_loss = 0
         self.total_commonlit_train_loss = 0
         self.total_split_correct = 0
         self.total_simple_correct = 0
         self.total_books_correct = 0
+        self.total_science_correct = 0
 
         self.count_batches = 0
         self.count_common_lit = 0
         self.count_split = 0
         self.count_simple = 0
         self.count_books = 0
+        self.count_science = 0
 
         self.avg_train_loss = 0
         self.avg_commonlit_train_loss = 0
         self.avg_books_loss = 0
+        self.avg_science_loss = 0
         self.avg_simple_loss = 0
+
+        self.rmse_calibrated = 0
+        self.mu = 0
+        self.mid_point = 0
 
         self.commonlit_train_loss_deque = deque(maxlen=100)
         self.avg_commonlit_train_loss_deque = 0
@@ -48,9 +56,11 @@ class TrainingStats:
         self.avg_train_loss = self.total_train_loss / (n_train)
         self.avg_commonlit_train_loss = self.total_commonlit_train_loss / (self.count_common_lit + 1e-15)
         self.avg_books_loss = self.total_books_loss / (self.count_books + 1e-15)
+        self.avg_science_loss = self.total_science_loss / (self.count_science + 1e-15)
         self.avg_simple_loss = self.total_simple_loss / (self.count_simple + 1e-15)
         self.split_accuracy = self.total_split_correct / (self.count_split + 1e-15)
         self.books_accuracy = self.total_books_correct / (self.count_books + 1e-15)
+        self.science_accuracy = self.total_science_correct / (self.count_science + 1e-15)
         self.simple_accuracy = self.total_simple_correct / (self.count_simple + 1e-15)
         self.avg_commonlit_train_loss_deque = sum(self.commonlit_train_loss_deque) / (
                     self.batch_size * len(self.commonlit_train_loss_deque) + 1e-15)
@@ -92,21 +102,32 @@ class TrainingStats:
                     self.total_books_correct += diff
                     self.total_books_loss += loss
 
+                elif task_name == 'science':
+
+                    self.count_science += batch_size
+                    self.total_science_correct += diff
+                    self.total_science_loss += loss
+
         # Add losses from all loss functions
         self.total_train_loss += loss
 
     def print_valid(self):
 
         # stats_string = " Train: {:.4f} | Train Latest {:.4f} | Valid: {:.4f} | Split: {:.4f} | Books: {:.4f} | Simple: {:.4f} | lr: {:.4f}"
-        stats_string = " Train: {:.4f} | Train Latest {:.4f} | Valid: {:.4f} | Books: {:.4f} | Simple: {:.4f} | lr: {:.4f}"
+        # stats_string = " Train: {:.4f} | Train Latest {:.4f} | Valid: {:.4f} | Valid Calib: {:.4f}| Books: {:.4f} | Science: {:.4f} | Simple: {:.4f} | mu: {:.4f}"
+        stats_string = " Train: {:.4f} | Train Latest {:.4f} | Valid: {:.4f} | Valid Calib: {:.4f}| mu: {:.4f} | midpoint: {:.4f}"
 
         print(stats_string.format(
             np.sqrt(self.avg_commonlit_train_loss),
             np.sqrt(self.avg_commonlit_train_loss_deque),
             np.sqrt(self.avg_val_loss),
+            self.rmse_calibrated,
+            self.mu,
+            self.mid_point,
             # self.split_accuracy,
-            self.books_accuracy,
-            self.simple_accuracy,
-            10000 * self.last_lr),
+            # self.books_accuracy,
+            # self.science_accuracy,
+            # self.simple_accuracy,
+        ),
             '| task name: {}'.format(self.task_name)
         )
