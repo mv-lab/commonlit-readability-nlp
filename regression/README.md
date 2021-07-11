@@ -1,5 +1,9 @@
 # Best models so far
 
+
+<img width="693" alt="Screen Shot 2021-07-11 at 12 19 11 AM" src="https://user-images.githubusercontent.com/5984232/125186175-a0661a00-e1dd-11eb-834b-98223f794869.png">
+
+
 For all models:  Reran some folds which were high RMSE with different LR. Some folds did worse on pretrained ITPT model so removed it. 
 
 
@@ -82,3 +86,6 @@ electra_l_0620_folds1/params.txt:Best RMSE in fold: 1 was: 0.4840 <br>
 electra_l_0620_folds2/params.txt:Best RMSE in fold: 2 was: 0.4736 <br>
 electra_l_0620_folds3/params.txt:Best RMSE in fold: 3 was: 0.4711 <br>
 electra_l_0620_folds4/params.txt:Best RMSE in fold: 4 was: 0.4746 <br>
+
+
+
