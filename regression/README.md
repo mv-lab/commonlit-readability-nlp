@@ -1,7 +1,7 @@
 # Best models so far
 
 
-<img width="693" alt="Screen Shot 2021-07-11 at 12 19 11 AM" src="https://user-images.githubusercontent.com/5984232/125186175-a0661a00-e1dd-11eb-834b-98223f794869.png">
+<img width="687" alt="Screen Shot 2021-07-11 at 10 17 19 AM" src="https://user-images.githubusercontent.com/5984232/125204246-2fe8e880-e231-11eb-98ae-42eb6fe84bbb.png">
 
 
 For all models:  Reran some folds which were high RMSE with different LR. Some folds did worse on pretrained ITPT model so removed it. 
