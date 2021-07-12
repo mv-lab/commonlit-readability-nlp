@@ -210,7 +210,7 @@ def scheduler_factory(scheduler_name_or_scheduler_dict, optimizer, num_training_
                      'reduce_on_plateau': True,
                      'monitor': 'validation_loss'
                      }
-    elif scheduler_name_or_scheduler_dict is None:
+    elif scheduler_name_or_scheduler_dict is None or scheduler_name_or_scheduler_dict == 'None':
         scheduler = None
     else:
         raise NotImplementedError
