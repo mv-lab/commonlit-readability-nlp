@@ -546,7 +546,9 @@ def fit(config: Config, df_train, df_test=None,
             name=f'mean_pred_{config.model_name}_{config.lr}_{config.scheduler}_{datetime.datetime.now()}',
             project=project_name,
             job_type='train')
-        logger.experiment.log(config.as_dict())
+        config_dict = config.as_dict()
+        config_dict['callbacks'] = str(config_dict['callbacks'])
+        logger.experiment.log(config_dict)
         logger.experiment.save('fit_bert_with_mean_predictor.py')
 
     for fold in range(df_train['kfold'].max() + 1):
