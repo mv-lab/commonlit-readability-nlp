@@ -14,7 +14,7 @@ wandb.login(key=key)
 
 import os
 from dataclasses import dataclass
-from typing import List
+from typing import List, Union
 from typing import Optional
 
 import numpy as np
@@ -506,7 +506,7 @@ class ReturnValues:
     loss: float = 10.
     loss_calibrated: float = 10.
     logger: Optional[callable] = None
-    error: bool = False
+    error: Union[bool, callable] = False
 
 
 class FittingError(ValueError):
@@ -525,7 +525,7 @@ def stop_fitting(func):
         try:
             return func(*args, **kwargs)
         except FittingError:
-            return ReturnValues(error=True)
+            return ReturnValues(error=FittingError)
 
     return inner
 

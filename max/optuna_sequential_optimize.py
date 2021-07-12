@@ -8,7 +8,7 @@ import numpy as np
 import optuna
 import pandas as pd
 import pytorch_lightning as pl
-from optuna import Trial, Study
+from optuna import Trial, Study, TrialPruned
 from optuna.distributions import CategoricalDistribution, UniformDistribution, IntUniformDistribution
 from optuna.integration import PyTorchLightningPruningCallback
 from optuna.pruners import SuccessiveHalvingPruner
@@ -16,7 +16,7 @@ from optuna.trial import FrozenTrial
 from pytorch_lightning.utilities.memory import garbage_collection_cuda
 
 import wandb
-from fit_bert_with_mean_predictor import fit, Config
+from fit_bert_with_mean_predictor import fit, Config, FittingError
 
 try:
     with open('key.txt') as f:
@@ -229,6 +229,7 @@ class NlpTuner:
             t_0 = time.time()
             self.study.optimize(objective, n_trials, timeout=self.time_budget,
                                 callbacks=[RemoveBadWeights(num_models_to_save=4)],
+                                catch=(FittingError, TrialPruned),
                                 gc_after_trial=True)
             self.time_budget -= time.time() - t_0
             self.completed_trials += n_trials
