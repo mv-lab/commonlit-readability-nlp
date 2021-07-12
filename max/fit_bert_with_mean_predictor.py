@@ -54,6 +54,7 @@ class Config:
 
     text_column_name: str = 'excerpt'
     target_column_name: str = 'target'
+    callbacks: Optional[dict] = None
 
     overwrite_train_params: Optional[dict] = None
 
@@ -562,6 +563,9 @@ def fit(config: Config, df_train, df_test=None,
                                               filename=config.to_str() + '_{epoch:02d}-{validation_loss:.2f}',
                                               monitor='validation_loss_calibrated')
         callbacks = [checkpoint_callback, StopFitting()]
+        if isinstance(config.callbacks, dict):
+            callbacks += config.callbacks.get(fold)
+
         if logger is not None:
             callbacks += [LearningRateMonitor(logging_interval='step', log_momentum=True)]
         trainer_params = dict(logger=logger,
@@ -600,7 +604,7 @@ def fit(config: Config, df_train, df_test=None,
         logger.experiment.log({'oof_rsme': loss, 'oof_rmse_calibrated': loss_calibrated})
         experiment_name = config.to_str() + f'oof_loss:_{loss}'
         wandb_fn = 'df_oof_' + experiment_name + '.csv'
-        wandb_fn.replace('/', '_')
+        wandb_fn = wandb_fn.replace('/', '_')
         os.makedirs(os.path.dirname(wandb_fn), exist_ok=True)
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(wandb_fn)
@@ -659,5 +663,5 @@ if __name__ == '__main__':
 
     df_oof = return_dict.df_oof
     experiment_name = config.to_str() + f'oof_loss:_{loss}'
-    oof_filepath = os.path.join(config.root_dir, 'df_oof_' + experiment_name + '.csv')
+    oof_filepath = os.path.join(config.root_dir, 'df_oof_' + experiment_name.replace('/', '_') + '.csv')
     df_oof.to_csv(oof_filepath, index=False)

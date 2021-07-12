@@ -10,6 +10,8 @@ import pandas as pd
 import pytorch_lightning as pl
 from optuna import Trial, Study
 from optuna.distributions import CategoricalDistribution, UniformDistribution, IntUniformDistribution
+from optuna.integration import PyTorchLightningPruningCallback
+from optuna.pruners import SuccessiveHalvingPruner
 from optuna.trial import FrozenTrial
 from pytorch_lightning.utilities.memory import garbage_collection_cuda
 
@@ -89,7 +91,9 @@ class Objective:
                         lr=best_params['lr'],
                         epochs=10,
                         scheduler=best_params['scheduler'],
-                        overwrite_train_params={'val_check_interval': 0.5}
+                        callbacks={0: PyTorchLightningPruningCallback(trial=trial,
+                                                                      monitor='validation_loss_calibrated')},
+                        # overwrite_train_params={'val_check_interval': 0.5}
                         )
         self.sample_parameters(config, trial)
         return config
@@ -173,7 +177,9 @@ class NlpTuner:
         self.num_trials = num_trials
         self.time_budget = time_budget
         self.completed_trials = 0
-        self.study = optuna.create_study(storage=None, direction='minimize')
+        self.study = optuna.create_study(storage=None,
+                                         pruner=SuccessiveHalvingPruner(),
+                                         direction='minimize')
 
     def run(self) -> None:
         self.tune_learning_rate()
@@ -217,7 +223,7 @@ class NlpTuner:
         self.tune_params(params, 20, stage='tune_rest')
 
     def tune_params(self, params_to_tune, n_trials, stage=''):
-        study_name = f'study_{args.model_name}_{stage}.pkl'
+        study_name = f'study_{args.model_name}_{stage}.pkl'.replace('/', '_')
         if (self.num_trials > 0 and self.completed_trials < self.num_trials) or self.num_trials < 0:
             objective = Objective(self.df_train, params_to_tune, stage=stage)
             t_0 = time.time()
@@ -239,5 +245,5 @@ if __name__ == '__main__':
     try:
         tuner.run()
     except KeyboardInterrupt:
-        with open(f'study_{args.model_name}_interruped.pkl', 'wb') as f:
+        with open(f'study_{args.model_name}_interruped.pkl'.replace('/', '_'), 'wb') as f:
             pickle.dump(tuner.study, f)
