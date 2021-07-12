@@ -91,8 +91,8 @@ class Objective:
                         lr=best_params['lr'],
                         epochs=10,
                         scheduler=best_params['scheduler'],
-                        callbacks={0: PyTorchLightningPruningCallback(trial=trial,
-                                                                      monitor='validation_loss_calibrated')},
+                        callbacks={0: [PyTorchLightningPruningCallback(trial=trial,
+                                                                       monitor='validation_loss_calibrated')]},
                         # overwrite_train_params={'val_check_interval': 0.5}
                         )
         self.sample_parameters(config, trial)
