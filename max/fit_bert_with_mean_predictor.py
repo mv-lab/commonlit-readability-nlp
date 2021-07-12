@@ -564,7 +564,7 @@ def fit(config: Config, df_train, df_test=None,
                                               monitor='validation_loss_calibrated')
         callbacks = [checkpoint_callback, StopFitting()]
         if isinstance(config.callbacks, dict):
-            callbacks += config.callbacks.get(fold)
+            callbacks += config.callbacks.get(fold, [])
 
         if logger is not None:
             callbacks += [LearningRateMonitor(logging_interval='step', log_momentum=True)]
