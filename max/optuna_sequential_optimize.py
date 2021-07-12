@@ -205,15 +205,15 @@ class NlpTuner:
 
     def tune_scheduler(self) -> None:
         param_name = "scheduler"
-        param_values = ['linear_schedule_with_warmup', 'cosine', 'plateau', None]
+        param_values = ['linear_schedule_with_warmup', 'cosine', 'plateau', 'None']
 
-        sampler = optuna.samplers.RandomSampler()
+        sampler = optuna.samplers.GridSampler({param_name: param_values})
         self.study.sampler = sampler
         self.tune_params([param_name], len(param_values), stage='scheduler')
 
     def tune_accumulate_grad_batches(self) -> None:
         param_name = "accumulate_grad_batches"
-        param_values = [1, 2, 5, 10, 20]
+        param_values = [10]
         sampler = optuna.samplers.GridSampler({param_name: param_values})
         self.study.sampler = sampler
         self.tune_params([param_name], len(param_values), stage='accumulate_grad_batches')
