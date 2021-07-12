@@ -498,6 +498,16 @@ class NLPModel(pl.LightningModule):
         return df
 
 
+@dataclass
+class ReturnValues:
+    df_oof: pd.DataFrame = None
+    best_weights: list = None
+    loss: float = 10.
+    loss_calibrated: float = 10.
+    logger: Optional[callable] = None
+    error: bool = False
+
+
 class FittingError(ValueError):
     pass
 
@@ -514,10 +524,7 @@ def stop_fitting(func):
         try:
             return func(*args, **kwargs)
         except FittingError:
-            return {'error': True,
-                    'loss': 10,
-                    'best_weights': [],
-                    'loss_calibrated': 10}
+            return ReturnValues(error=True)
 
     return inner
 
@@ -528,7 +535,7 @@ def fit(config: Config, df_train, df_test=None,
         model_class=NLPModel,
         overwrite_train_params=None,
         logger_class=WandbLogger,
-        project_name='CommonlitReadabilityTrain'):
+        project_name='CommonlitReadabilityTrain') -> ReturnValues:
     dfs_oof = []
     best_weights = []
     logger = None
@@ -598,11 +605,12 @@ def fit(config: Config, df_train, df_test=None,
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(wandb_fn)
     logger.experiment.finish()
-    return {'df_oof': df_oof,
-            'best_weights': best_weights,
-            'loss': loss,
-            'loss_calibrated': loss_calibrated,
-            'logger': logger}
+
+    return ReturnValues(df_oof=df_oof,
+                        best_weights=best_weights,
+                        loss=loss,
+                        loss_calibrated=loss_calibrated,
+                        logger=logger)
 
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
@@ -645,15 +653,11 @@ if __name__ == '__main__':
                       overwrite_train_params=overwrite_train_params,
                       df_train=df_train)
 
-    loss = return_dict['loss']
-    print(return_dict['loss'])
-    print(return_dict['loss_calibrated'])
+    loss = return_dict.loss
+    print(loss)
+    print(return_dict.loss_calibrated)
 
-    df_oof = return_dict['df_oof']
-
+    df_oof = return_dict.df_oof
     experiment_name = config.to_str() + f'oof_loss:_{loss}'
-
     oof_filepath = os.path.join(config.root_dir, 'df_oof_' + experiment_name + '.csv')
-    df_test_filepath = os.path.join(config.root_dir, 'df_test_preds_' + experiment_name + '.csv')
-
     df_oof.to_csv(oof_filepath, index=False)
