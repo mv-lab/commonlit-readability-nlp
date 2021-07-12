@@ -1,7 +1,8 @@
 # Best models so far
 
 
-<img width="686" alt="Screen Shot 2021-07-11 at 11 26 19 AM" src="https://user-images.githubusercontent.com/5984232/125206204-d1c10300-e23a-11eb-8b62-82f1d50920c1.png">
+![Screen Shot 2021-07-12 at 10 40 20 AM](https://user-images.githubusercontent.com/5984232/125332025-963b3d00-e2fd-11eb-8f53-60d607b28cf6.png)
+
 
 
 
