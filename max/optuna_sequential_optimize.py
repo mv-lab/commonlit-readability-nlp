@@ -172,10 +172,12 @@ class Objective:
 
 class NlpTuner:
 
-    def __init__(self, df_train, num_trials=-1, time_budget=60 * 60 * 24 * 7):
+    def __init__(self, df_train, num_trials=-1, time_budget=60 * 60 * 24 * 7, resume=True):
         self.df_train = df_train
         self.num_trials = num_trials
         self.time_budget = time_budget
+        self.resume = resume
+
         self.completed_trials = 0
         self.study = optuna.create_study(storage=None,
                                          pruner=SuccessiveHalvingPruner(),
@@ -224,6 +226,11 @@ class NlpTuner:
 
     def tune_params(self, params_to_tune, n_trials, stage=''):
         study_name = f'study_{args.model_name}_{stage}.pkl'.replace('/', '_')
+        if self.resume and os.path.exists(study_name):
+            with open(study_name, 'rb') as f:
+                self.study = pickle.load(f)
+            return
+
         if (self.num_trials > 0 and self.completed_trials < self.num_trials) or self.num_trials < 0:
             objective = Objective(self.df_train, params_to_tune, stage=stage)
             t_0 = time.time()
