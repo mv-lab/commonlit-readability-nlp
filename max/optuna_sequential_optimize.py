@@ -244,7 +244,7 @@ class NlpTuner:
         else:
             study_name = 'not_tuned_not_enough_trials_left_' + study_name
 
-        os.makedirs(os.path.dirname(study_name), exist_ok=True)
+        os.makedirs(os.path.dirname(study_name) or './', exist_ok=True)
         with open(study_name, 'wb') as f:
             pickle.dump(self.study, f)
 
