@@ -8,6 +8,7 @@ import numpy as np
 import optuna
 import pandas as pd
 import pytorch_lightning as pl
+from attr import dataclass
 from optuna import Trial, Study, TrialPruned
 from optuna.distributions import CategoricalDistribution, UniformDistribution, IntUniformDistribution
 from optuna.integration import PyTorchLightningPruningCallback
@@ -17,10 +18,6 @@ from pytorch_lightning.utilities.memory import garbage_collection_cuda
 
 import wandb
 from fit_bert_with_mean_predictor import fit, Config, FittingError
-
-parser = argparse.ArgumentParser(description='Process pytorch params.')
-parser.add_argument('-model_name', type=str, default='roberta-base')
-args = parser.parse_args()
 
 
 class RemoveBadWeights:
@@ -58,26 +55,37 @@ class RemoveBadWeights:
         return [trial for trial in study.trials if trial.number in trial_ids_to_remove]
 
 
+@dataclass
+class PossibleTuningSteps:
+    optimizer_name: tuple = (CategoricalDistribution, ['AdamW', 'AdamWNoBias', 'AdamWNoDecay'])
+    loss_name: tuple = (CategoricalDistribution, ['rmse_loss', 'rmse_l1_loss'])
+    lr: tuple = (UniformDistribution, [2e-6, 5e-5])
+    scheduler: tuple = (CategoricalDistribution, ['linear_schedule_with_warmup', 'cosine',
+                                                  'plateau', 'None'])
+    accumulate_grad_batches: tuple = (IntUniformDistribution, [1, 10])
+
+
 class Objective:
-    possible_tuning_steps = {
-        'optimizer_name': (CategoricalDistribution, ['AdamW', 'AdamWNoBias', 'AdamWDifferential']),
-        'loss_name': (CategoricalDistribution, ['rmse_loss', 'rmse_l1_loss']),
-        'lr': (UniformDistribution, [2e-6, 5e-5]),
-        'scheduler': (CategoricalDistribution, ['linear_schedule_with_warmup', 'cosine',
-                                                'plateau', None]),
-        'accumulate_grad_batches': (IntUniformDistribution, [1, 10])}
 
     def __init__(self,
                  df_train, params_to_tune, stage,
+                 model_name,
+                 overwrite_train_params=None,
                  project_name='optuna_optimizing'):
         self.df_train = df_train
         self.params_to_tune = params_to_tune
+        self.model_name = model_name
+        self.overwrite_train_params = overwrite_train_params
+        if isinstance(self.overwrite_train_params, dict) and 'val_check_interval' in self.overwrite_train_params:
+            raise AssertionError('val_check_interval must not be overwritten when using '
+                                 'Lightning pruning Callback!')
+
         self.stage = stage
         self.project_name = project_name
 
     def get_config(self, trial):
         best_params = self.get_best_parameters(trial)
-        config = Config(model_name=args.model_name,
+        config = Config(model_name=self.model_name,
                         root_dir='../../optuna_optimize_logs',
                         batch_size=8,
                         precision=16,
@@ -89,14 +97,15 @@ class Objective:
                         scheduler=best_params['scheduler'],
                         callbacks={0: [PyTorchLightningPruningCallback(trial=trial,
                                                                        monitor='validation_loss_calibrated')]},
-                        # overwrite_train_params={'val_check_interval': 0.5}
+                        overwrite_train_params=self.overwrite_train_params
                         )
         self.sample_parameters(config, trial)
         return config
 
     def sample_parameters(self, config, trial):
+        # TODO: Move to PossibleTuningSteps
         for parameter in self.params_to_tune:
-            distribution, values = self.possible_tuning_steps[parameter]
+            distribution, values = getattr(PossibleTuningSteps(), parameter)
             if distribution == CategoricalDistribution:
                 suggestion = trial.suggest_categorical(parameter, values)
             elif distribution == UniformDistribution:
@@ -119,7 +128,7 @@ class Objective:
 
         best_trial = trial.study.best_trial
         if best_trial is not None:
-            for parameter in self.possible_tuning_steps:
+            for parameter in PossibleTuningSteps.__annotations__.keys():
                 best_params[parameter] = best_trial.params.get(parameter, best_params[parameter])
         return best_params
 
@@ -168,8 +177,10 @@ class Objective:
 
 class NlpTuner:
 
-    def __init__(self, df_train, num_trials=-1, time_budget=60 * 60 * 24 * 7, resume=True,
-                 project_name='optuna_optimizing'):
+    def __init__(self, df_train, model_name, num_trials=-1, time_budget=60 * 60 * 24 * 7, resume=True,
+                 project_name='optuna_optimizing', overwrite_train_params=None):
+        self.overwrite_train_params = overwrite_train_params
+        self.model_name = model_name
         self.project_name = project_name
         self.df_train = df_train
         self.num_trials = num_trials
@@ -203,7 +214,7 @@ class NlpTuner:
 
     def tune_scheduler(self) -> None:
         param_name = "scheduler"
-        param_values = ['linear_schedule_with_warmup', 'cosine', 'plateau', 'None']
+        param_values = PossibleTuningSteps().scheduler[1]
 
         sampler = optuna.samplers.GridSampler({param_name: param_values})
         self.study.sampler = sampler
@@ -231,7 +242,10 @@ class NlpTuner:
             return
 
         if (self.num_trials > 0 and self.completed_trials < self.num_trials) or self.num_trials < 0:
-            objective = Objective(self.df_train, params_to_tune, stage=stage, project_name=self.project_name)
+            objective = Objective(self.df_train, params_to_tune, stage=stage,
+                                  model_name=self.model_name,
+                                  overwrite_train_params=self.overwrite_train_params,
+                                  project_name=self.project_name)
             t_0 = time.time()
             self.study.optimize(objective, n_trials, timeout=self.time_budget,
                                 callbacks=[RemoveBadWeights(num_models_to_save=4)],
@@ -247,6 +261,10 @@ class NlpTuner:
             pickle.dump(self.study, f)
 
 
+parser = argparse.ArgumentParser(description='Process pytorch params.')
+parser.add_argument('-model_name', type=str, default='roberta-base')
+args = parser.parse_args()
+
 if __name__ == '__main__':
 
     try:
@@ -258,7 +276,8 @@ if __name__ == '__main__':
 
     df_train = pd.read_csv('train_folds.csv')
     tuner = NlpTuner(df_train=df_train,
-                     project_name='optuna_optimizing_roberta-large-finetuned-race')
+                     model_name=args.model_name,
+                     project_name='optuna_optimizing_test')
     try:
         tuner.run()
     except KeyboardInterrupt:

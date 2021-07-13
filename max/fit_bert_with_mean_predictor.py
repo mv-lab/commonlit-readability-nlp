@@ -122,7 +122,7 @@ def optimizer_factory(optimizer_name, model, lr):
         elif hasattr(model, 'funnel'):
             backbone = model.funnel
         else:
-            raise NotImplementedError
+            raise NotImplementedError(optimizer_name)
 
         backbone_subset = "bert"
         optimizer_parameters = [
@@ -561,12 +561,14 @@ def fit(config: Config, df_train, df_test=None,
 
         if logger is not None:
             callbacks += [LearningRateMonitor(logging_interval='step', log_momentum=True)]
+        default_root_dir = os.path.join(dirpath, config.to_str())
+        print(f'Saving lightning logs to {default_root_dir}')
         trainer_params = dict(logger=logger,
                               checkpoint_callback=True,
                               callbacks=callbacks,
                               gpus=config.gpus,
                               accumulate_grad_batches=config.accumulate_grad_batches,
-                              default_root_dir=os.path.join(dirpath, config.to_str()),
+                              default_root_dir=default_root_dir,
                               max_epochs=config.epochs,
                               log_every_n_steps=1,
                               num_sanity_val_steps=0,
@@ -602,7 +604,7 @@ def fit(config: Config, df_train, df_test=None,
         os.makedirs(dirname, exist_ok=True)
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(wandb_fn)
-    logger.experiment.finish()
+        logger.experiment.finish()
 
     return ReturnValues(df_oof=df_oof,
                         best_weights=best_weights,
