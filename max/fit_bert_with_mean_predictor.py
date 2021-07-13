@@ -1,19 +1,6 @@
 import argparse
 import datetime
-
-from pytorch_lightning.callbacks import LearningRateMonitor
-from scipy.stats import norm
-from tqdm import tqdm
-
-import wandb
-
-with open('key.txt') as f:
-    key = f.readline()
-
-wandb.login(key=key)
-
 import os
-from dataclasses import dataclass
 from typing import List, Union
 from typing import Optional
 
@@ -21,15 +8,19 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+import torch.multiprocessing
 import torch.nn as nn
 import transformers
-import wandb
+from dataclasses import dataclass
+from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+from scipy.stats import norm
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
 
-import torch.multiprocessing
+import wandb
 
 torch.multiprocessing.set_sharing_strategy('file_system')
 
@@ -541,7 +532,7 @@ def fit(config: Config, df_train, df_test=None,
     best_weights = []
     logger = None
 
-    if logger_class == WandbLogger:
+    if logger_class == WandbLogger and isinstance(project_name, str) and len(project_name) > 0:
         logger = logger_class(
             name=f'mean_pred_{config.model_name}_{config.lr}_{config.scheduler}_{datetime.datetime.now()}',
             project=project_name,

@@ -18,13 +18,6 @@ from pytorch_lightning.utilities.memory import garbage_collection_cuda
 import wandb
 from fit_bert_with_mean_predictor import fit, Config, FittingError
 
-try:
-    with open('key.txt') as f:
-        key = f.readline()
-    wandb.login(key=key)
-except FileNotFoundError:
-    print('Not logging in to wandb - file no found')
-
 parser = argparse.ArgumentParser(description='Process pytorch params.')
 parser.add_argument('-model_name', type=str, default='roberta-base')
 args = parser.parse_args()
@@ -74,10 +67,13 @@ class Objective:
                                                 'plateau', None]),
         'accumulate_grad_batches': (IntUniformDistribution, [1, 10])}
 
-    def __init__(self, df_train, params_to_tune, stage):
+    def __init__(self,
+                 df_train, params_to_tune, stage,
+                 project_name='optuna_optimizing'):
+        self.df_train = df_train
         self.params_to_tune = params_to_tune
         self.stage = stage
-        self.df_train = df_train
+        self.project_name = project_name
 
     def get_config(self, trial):
         best_params = self.get_best_parameters(trial)
@@ -135,7 +131,7 @@ class Objective:
         return_dict = fit(config=config,
                           overwrite_train_params=overwrite_train_params,
                           df_train=self.df_train,
-                          project_name='optuna_optimizing_roberta-large-finetuned-race')
+                          project_name=self.project_name)
         garbage_collection_cuda()
 
         loss = return_dict.loss
@@ -172,7 +168,9 @@ class Objective:
 
 class NlpTuner:
 
-    def __init__(self, df_train, num_trials=-1, time_budget=60 * 60 * 24 * 7, resume=True):
+    def __init__(self, df_train, num_trials=-1, time_budget=60 * 60 * 24 * 7, resume=True,
+                 project_name='optuna_optimizing'):
+        self.project_name = project_name
         self.df_train = df_train
         self.num_trials = num_trials
         self.time_budget = time_budget
@@ -233,7 +231,7 @@ class NlpTuner:
             return
 
         if (self.num_trials > 0 and self.completed_trials < self.num_trials) or self.num_trials < 0:
-            objective = Objective(self.df_train, params_to_tune, stage=stage)
+            objective = Objective(self.df_train, params_to_tune, stage=stage, project_name=self.project_name)
             t_0 = time.time()
             self.study.optimize(objective, n_trials, timeout=self.time_budget,
                                 callbacks=[RemoveBadWeights(num_models_to_save=4)],
@@ -250,7 +248,17 @@ class NlpTuner:
 
 
 if __name__ == '__main__':
-    tuner = NlpTuner(df_train=pd.read_csv('train_folds.csv'))
+
+    try:
+        with open('key.txt') as f:
+            key = f.readline()
+        wandb.login(key=key)
+    except FileNotFoundError:
+        print('Not logging in to wandb - file no found')
+
+    df_train = pd.read_csv('train_folds.csv')
+    tuner = NlpTuner(df_train=df_train,
+                     project_name='optuna_optimizing_roberta-large-finetuned-race')
     try:
         tuner.run()
     except KeyboardInterrupt:
