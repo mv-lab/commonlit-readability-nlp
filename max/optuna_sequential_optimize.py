@@ -229,6 +229,7 @@ class NlpTuner:
         if self.resume and os.path.exists(study_name):
             with open(study_name, 'rb') as f:
                 self.study = pickle.load(f)
+                print(f'Loaded study: {study_name}')
             return
 
         if (self.num_trials > 0 and self.completed_trials < self.num_trials) or self.num_trials < 0:
