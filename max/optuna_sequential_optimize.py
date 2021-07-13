@@ -193,10 +193,8 @@ class NlpTuner:
 
         self.completed_trials = 0
         optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
-        storage_name = "sqlite:///{}.db".format(model_name)
-        engine = create_engine(storage_name)
         self.study = optuna.create_study(study_name=model_name + '_' + str(time.time()),
-                                         storage=storage_name,
+                                         storage=None,
                                          pruner=SuccessiveHalvingPruner(),
                                          direction='minimize')
 
