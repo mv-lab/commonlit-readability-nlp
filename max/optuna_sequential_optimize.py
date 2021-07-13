@@ -1,6 +1,8 @@
 import argparse
+import logging
 import os
 import pickle
+import sys
 import time
 from typing import List
 
@@ -15,6 +17,7 @@ from optuna.integration import PyTorchLightningPruningCallback
 from optuna.pruners import SuccessiveHalvingPruner
 from optuna.trial import FrozenTrial
 from pytorch_lightning.utilities.memory import garbage_collection_cuda
+from sqlalchemy import create_engine
 
 import wandb
 from fit_bert_with_mean_predictor import fit, Config, FittingError
@@ -188,7 +191,11 @@ class NlpTuner:
         self.resume = resume
 
         self.completed_trials = 0
-        self.study = optuna.create_study(storage=None,
+        optuna.logging.get_logger("optuna").addHandler(logging.StreamHandler(sys.stdout))
+        storage_name = "sqlite:///{}.db".format(model_name)
+        engine = create_engine(storage_name)
+        self.study = optuna.create_study(study_name=model_name + '_' + str(time.time()),
+                                         storage=storage_name,
                                          pruner=SuccessiveHalvingPruner(),
                                          direction='minimize')
 
