@@ -607,7 +607,8 @@ def fit(config: Config, df_train, df_test=None,
         experiment_name = config.to_str() + f'oof_loss:_{loss}'
         wandb_fn = 'df_oof_' + experiment_name + '.csv'
         wandb_fn = wandb_fn.replace('/', '_')
-        os.makedirs(os.path.dirname(wandb_fn), exist_ok=True)
+        dirname = os.path.dirname(wandb_fn) or './'
+        os.makedirs(dirname, exist_ok=True)
         df_oof.to_csv(wandb_fn, index=False)
         logger.experiment.save(wandb_fn)
     logger.experiment.finish()
