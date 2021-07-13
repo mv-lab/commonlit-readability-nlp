@@ -51,7 +51,8 @@ class RemoveBadWeights:
                                                                                                for trial in
                                                                                                completed_trials])]
         best_id = study.best_trial._trial_id
-        assert best_id == sorted_trials_ids[0] or best_id == sorted_trials_ids[-1]
+        if not (best_id == sorted_trials_ids[0] or best_id == sorted_trials_ids[-1]):
+            return []
         if best_id == sorted_trials_ids[-1]:
             sorted_trials_ids = sorted_trials_ids[::-1]
         trial_ids_to_remove = sorted_trials_ids[self.num_models_to_save:]
