@@ -147,7 +147,7 @@ class Objective:
             experiment_name = config.to_str() + f'oof_loss:_{loss}'
             experiment_name = experiment_name.replace('/', '_')
             oof_filepath = os.path.join(config.root_dir, 'df_oof_' + experiment_name + '.csv')
-            os.makedirs(os.path.dirname(oof_filepath), exist_ok=True)
+            os.makedirs(config.root_dir, exist_ok=True)
             df_oof.to_csv(oof_filepath, index=False)
         return return_dict
 
