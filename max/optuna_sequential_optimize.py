@@ -162,12 +162,9 @@ class Objective:
         return best_params
 
     def fit(self, config: Config):
-        overwrite_train_params = config.overwrite_train_params
-
         pl.seed_everything(seed=config.seed)
 
         return_dict = fit(config=config,
-                          overwrite_train_params=overwrite_train_params,
                           df_train=self.df_train,
                           project_name=self.project_name)
         garbage_collection_cuda()

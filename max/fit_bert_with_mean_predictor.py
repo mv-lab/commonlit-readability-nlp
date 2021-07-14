@@ -525,7 +525,6 @@ def stop_fitting(func):
 def fit(config: Config, df_train, df_test=None,
         data_module_class=NLPDataModule,
         model_class=NLPModel,
-        overwrite_train_params=None,
         logger_class=WandbLogger,
         project_name='CommonlitReadabilityTrain') -> ReturnValues:
     dfs_oof = []
@@ -579,8 +578,8 @@ def fit(config: Config, df_train, df_test=None,
                               gradient_clip_val=0.7,
                               reload_dataloaders_every_epoch=True)
 
-        if isinstance(overwrite_train_params, dict):
-            trainer_params.update(overwrite_train_params)
+        if isinstance(config.overwrite_train_params, dict):
+            trainer_params.update(config.overwrite_train_params)
 
         trainer = pl.Trainer(**trainer_params)
         trainer.fit(model=model, datamodule=datamodule)
@@ -646,12 +645,9 @@ if __name__ == '__main__':
                     epochs=args.epochs,
                     overwrite_train_params={'val_check_interval': 0.5})
 
-    overwrite_train_params = config.overwrite_train_params
-
     pl.seed_everything(seed=config.seed)
 
     return_dict = fit(config=config,
-                      overwrite_train_params=overwrite_train_params,
                       df_train=df_train)
 
     loss = return_dict.loss
