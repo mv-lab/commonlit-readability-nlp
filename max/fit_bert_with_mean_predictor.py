@@ -532,6 +532,7 @@ def fit(config: Config, df_train, df_test=None,
     best_weights = []
     logger = None
 
+    project_name = project_name.replace('/', '_')
     if logger_class == WandbLogger and isinstance(project_name, str) and len(project_name) > 0:
         logger = logger_class(
             name=f'mean_pred_{config.model_name}_{config.lr}_{config.scheduler}_{datetime.datetime.now()}',
