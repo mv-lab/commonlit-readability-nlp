@@ -283,7 +283,7 @@ if __name__ == '__main__':
     df_train = pd.read_csv('train_folds.csv')
     tuner = NlpTuner(df_train=df_train,
                      model_name=args.model_name,
-                     project_name='optuna_optimizing_test')
+                     project_name=f'{args.model_name}_optuna_sequential')
     try:
         tuner.run()
     except KeyboardInterrupt:
