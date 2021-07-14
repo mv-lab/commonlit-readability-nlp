@@ -508,6 +508,9 @@ class StopFitting(pl.callbacks.Callback):
 
     def on_validation_end(self, trainer: 'pl.Trainer', pl_module: 'pl.LightningModule') -> None:
         if pl_module.validation_loss_calibrated > 1.0 and trainer.current_epoch >= 1:
+            logger = trainer.logger
+            if isinstance(logger, WandbLogger):
+                logger.experiment.finish()
             raise FittingError
 
 
