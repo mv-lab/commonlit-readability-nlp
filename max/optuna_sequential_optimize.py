@@ -4,6 +4,7 @@ import os
 import pickle
 import sys
 import time
+import warnings
 from typing import List
 
 import numpy as np
@@ -16,11 +17,35 @@ from optuna.distributions import CategoricalDistribution, UniformDistribution, I
 from optuna.integration import PyTorchLightningPruningCallback
 from optuna.pruners import SuccessiveHalvingPruner
 from optuna.trial import FrozenTrial
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.memory import garbage_collection_cuda
-from sqlalchemy import create_engine
 
 import wandb
 from fit_bert_with_mean_predictor import fit, Config, FittingError
+
+
+class PyTorchLightningPruningCallbackLogger(PyTorchLightningPruningCallback):
+
+    def on_validation_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        epoch = pl_module.current_epoch
+
+        current_score = trainer.callback_metrics.get(self.monitor)
+        if current_score is None:
+            message = (
+                "The metric '{}' is not in the evaluation logs for pruning. "
+                "Please make sure you set the correct metric name.".format(self.monitor)
+            )
+            warnings.warn(message)
+            return
+
+        self._trial.report(current_score, step=epoch)
+        if self._trial.should_prune():
+            logger = trainer.logger
+            if isinstance(logger, WandbLogger):
+                logger.experiment.finish()
+
+            message = "Trial was pruned at epoch {}.".format(epoch)
+            raise optuna.TrialPruned(message)
 
 
 class RemoveBadWeights:
@@ -99,8 +124,8 @@ class Objective:
                         lr=best_params['lr'],
                         epochs=10,
                         scheduler=best_params['scheduler'],
-                        callbacks={0: [PyTorchLightningPruningCallback(trial=trial,
-                                                                       monitor='validation_loss_calibrated')]},
+                        callbacks={0: [PyTorchLightningPruningCallbackLogger(trial=trial,
+                                                                             monitor='validation_loss_calibrated')]},
                         overwrite_train_params=self.overwrite_train_params
                         )
         self.sample_parameters(config, trial)
