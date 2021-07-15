@@ -1,5 +1,6 @@
 import argparse
 import datetime
+import gc
 import os
 import time
 from typing import List, Union
@@ -7,16 +8,14 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-import pytorch_lightning as pl
 import torch
 import torch.multiprocessing
 import torch.nn as nn
 import transformers
 from dataclasses import dataclass
-from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning import LightningDataModule, LightningModule, Callback, seed_everything
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.utilities.memory import garbage_collection_cuda
 from scipy.stats import norm
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
@@ -276,7 +275,7 @@ class TextCollate:
             raise NotImplementedError
 
 
-class NLPDataModule(pl.LightningDataModule):
+class NLPDataModule(LightningDataModule):
 
     def __init__(self,
                  config: Config,
@@ -342,7 +341,7 @@ class NLPDataModule(pl.LightningDataModule):
                           shuffle=True if mode == 'train' else False)
 
 
-class NLPModel(pl.LightningModule):
+class NLPModel(LightningModule):
 
     def __init__(self, config: Config, fold=None):
         super().__init__()
@@ -506,7 +505,7 @@ class FittingError(ValueError):
     pass
 
 
-class StopFitting(pl.callbacks.Callback):
+class StopFitting(Callback):
 
     def on_validation_end(self, trainer: 'pl.Trainer', pl_module: 'pl.LightningModule') -> None:
         if pl_module.validation_loss_calibrated > 1.0 and trainer.current_epoch >= 1:
@@ -550,6 +549,7 @@ def fit(config: Config, df_train, df_test=None,
     for fold in range(df_train['kfold'].max() + 1):
         dfs_oof = fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_class, best_weights, fold,
                                logger)
+        from pytorch_lightning.utilities.memory import garbage_collection_cuda
         garbage_collection_cuda()
         time.sleep(5)
         garbage_collection_cuda()
@@ -577,7 +577,23 @@ def fit(config: Config, df_train, df_test=None,
                         logger=logger)
 
 
+def optimizer_to(optim, device):
+    for param in optim.state.values():
+        # Not sure there are any global tensors in the state dict
+        if isinstance(param, torch.Tensor):
+            param.data = param.data.to(device)
+            if param._grad is not None:
+                param._grad.data = param._grad.data.to(device)
+        elif isinstance(param, dict):
+            for subparam in param.values():
+                if isinstance(subparam, torch.Tensor):
+                    subparam.data = subparam.data.to(device)
+                    if subparam._grad is not None:
+                        subparam._grad.data = subparam._grad.data.to(device)
+
+
 def fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_class, best_weights, fold, logger):
+    import pytorch_lightning as pl
     pl.seed_everything(seed=config.seed)
     datamodule = data_module_class(config=config,
                                    df_train=df_train.loc[df_train['kfold'] != fold],
@@ -618,24 +634,28 @@ def fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_cl
     print(f'Loading {checkpoint_path}')
     model.load_state_dict(torch.load(checkpoint_path)['state_dict'])
     dfs_oof += [model.get_prediction_df(datamodule.val_dataloader())]
-
+    model.cpu()
+    optimizer_to(trainer.optimizers[0], 'cpu')
     callbacks = None
     trainer = None
     model = None
     datamodule = None
+    from pytorch_lightning.utilities.memory import garbage_collection_cuda
     garbage_collection_cuda()
+    time.sleep(10)
+    gc.collect()
     return dfs_oof
 
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
-parser.add_argument('-model_name', type=str, default='funnel-transformer/large')
+parser.add_argument('-model_name', type=str, default='distilbert-base-uncased')
 parser.add_argument('-batch_size', type=int, default=4)
 parser.add_argument('-optimizer_name', type=str, default='AdamW')
 parser.add_argument('-loss_name', type=str, default='rmse_l1_loss')
 parser.add_argument('-scheduler', type=str, default='linear_schedule_with_warmup')
 parser.add_argument('-accumulate_grad_batches', type=int, default=4)
 parser.add_argument('-lr', type=float, default=3e-5)
-parser.add_argument('-epochs', type=int, default=10)
+parser.add_argument('-epochs', type=int, default=1)
 
 args = parser.parse_args()
 
@@ -659,7 +679,7 @@ if __name__ == '__main__':
                     epochs=args.epochs,
                     overwrite_train_params={'val_check_interval': 0.5})
 
-    pl.seed_everything(seed=config.seed)
+    seed_everything(seed=config.seed)
 
     return_dict = fit(config=config,
                       df_train=df_train)
