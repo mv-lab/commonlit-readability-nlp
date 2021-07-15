@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import os
+import time
 from typing import List, Union
 from typing import Optional
 
@@ -15,6 +16,7 @@ from dataclasses import dataclass
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.utilities.memory import garbage_collection_cuda
 from scipy.stats import norm
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
@@ -546,52 +548,11 @@ def fit(config: Config, df_train, df_test=None,
         logger.experiment.save('fit_bert_with_mean_predictor.py')
 
     for fold in range(df_train['kfold'].max() + 1):
-        pl.seed_everything(seed=config.seed)
-        datamodule = data_module_class(config=config,
-                                       df_train=df_train.loc[df_train['kfold'] != fold],
-                                       df_valid=df_train.loc[df_train['kfold'] == fold],
-                                       df_test=df_test)
-
-        model = model_class(config=config, fold=fold)
-        dirpath = os.path.join(config.root_dir, f'./fold_{fold}')
-
-        checkpoint_callback = ModelCheckpoint(dirpath=dirpath,
-                                              filename=config.to_str() + '_{epoch:02d}-{validation_loss:.2f}',
-                                              monitor='validation_loss_calibrated')
-        callbacks = [checkpoint_callback, StopFitting()]
-        if isinstance(config.callbacks, dict):
-            callbacks += config.callbacks.get(fold, [])
-
-        if logger is not None:
-            callbacks += [LearningRateMonitor(logging_interval='step', log_momentum=True)]
-        default_root_dir = os.path.join(dirpath, config.to_str())
-        print(f'Saving lightning logs to {default_root_dir}')
-        trainer_params = dict(logger=logger,
-                              checkpoint_callback=True,
-                              callbacks=callbacks,
-                              gpus=config.gpus,
-                              accumulate_grad_batches=config.accumulate_grad_batches,
-                              default_root_dir=default_root_dir,
-                              max_epochs=config.epochs,
-                              log_every_n_steps=1,
-                              num_sanity_val_steps=0,
-                              min_epochs=1,
-                              precision=config.precision,
-                              deterministic=False,
-                              gradient_clip_val=0.7,
-                              reload_dataloaders_every_epoch=True)
-
-        if isinstance(config.overwrite_train_params, dict):
-            trainer_params.update(config.overwrite_train_params)
-
-        trainer = pl.Trainer(**trainer_params)
-        trainer.fit(model=model, datamodule=datamodule)
-        checkpoint_path = checkpoint_callback.best_model_path
-        best_weights.append(checkpoint_path)
-        print(f'Loading {checkpoint_path}')
-        model.load_state_dict(torch.load(checkpoint_path)['state_dict'])
-
-        dfs_oof += [model.get_prediction_df(datamodule.val_dataloader())]
+        dfs_oof = fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_class, best_weights, fold,
+                               logger)
+        garbage_collection_cuda()
+        time.sleep(5)
+        garbage_collection_cuda()
 
     df_oof = pd.concat(dfs_oof)
 
@@ -614,6 +575,56 @@ def fit(config: Config, df_train, df_test=None,
                         loss=loss,
                         loss_calibrated=loss_calibrated,
                         logger=logger)
+
+
+def fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_class, best_weights, fold, logger):
+    pl.seed_everything(seed=config.seed)
+    datamodule = data_module_class(config=config,
+                                   df_train=df_train.loc[df_train['kfold'] != fold],
+                                   df_valid=df_train.loc[df_train['kfold'] == fold],
+                                   df_test=df_test)
+    model = model_class(config=config, fold=fold)
+    dirpath = os.path.join(config.root_dir, f'./fold_{fold}')
+    checkpoint_callback = ModelCheckpoint(dirpath=dirpath,
+                                          filename=config.to_str() + '_{epoch:02d}-{validation_loss:.2f}',
+                                          monitor='validation_loss_calibrated')
+    callbacks = [checkpoint_callback, StopFitting()]
+    if isinstance(config.callbacks, dict):
+        callbacks += config.callbacks.get(fold, [])
+    if logger is not None:
+        callbacks += [LearningRateMonitor(logging_interval='step', log_momentum=True)]
+    default_root_dir = os.path.join(dirpath, config.to_str())
+    print(f'Saving lightning logs to {default_root_dir}')
+    trainer_params = dict(logger=logger,
+                          checkpoint_callback=True,
+                          callbacks=callbacks,
+                          gpus=config.gpus,
+                          accumulate_grad_batches=config.accumulate_grad_batches,
+                          default_root_dir=default_root_dir,
+                          max_epochs=config.epochs,
+                          log_every_n_steps=1,
+                          num_sanity_val_steps=0,
+                          min_epochs=1,
+                          precision=config.precision,
+                          deterministic=False,
+                          gradient_clip_val=0.7,
+                          reload_dataloaders_every_epoch=True)
+    if isinstance(config.overwrite_train_params, dict):
+        trainer_params.update(config.overwrite_train_params)
+    trainer = pl.Trainer(**trainer_params)
+    trainer.fit(model=model, datamodule=datamodule)
+    checkpoint_path = checkpoint_callback.best_model_path
+    best_weights.append(checkpoint_path)
+    print(f'Loading {checkpoint_path}')
+    model.load_state_dict(torch.load(checkpoint_path)['state_dict'])
+    dfs_oof += [model.get_prediction_df(datamodule.val_dataloader())]
+
+    callbacks = None
+    trainer = None
+    model = None
+    datamodule = None
+    garbage_collection_cuda()
+    return dfs_oof
 
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
