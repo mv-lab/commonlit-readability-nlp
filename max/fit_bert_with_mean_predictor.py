@@ -547,8 +547,15 @@ def fit(config: Config, df_train, df_test=None,
         logger.experiment.save('fit_bert_with_mean_predictor.py')
 
     for fold in range(df_train['kfold'].max() + 1):
-        dfs_oof = fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_class, best_weights, fold,
-                               logger)
+        df_val, checkpoint_path = fit_one_fold(config=config,
+                                               df_train=df_train.loc[df_train['kfold'] != fold],
+                                               df_valid=df_train.loc[df_train['kfold'] == fold],
+                                               df_test=df_test, data_module_class=data_module_class,
+                                               model_class=model_class,
+                                               fold=fold,
+                                               logger=logger)
+        best_weights += [checkpoint_path]
+        dfs_oof += [df_val]
         from pytorch_lightning.utilities.memory import garbage_collection_cuda
         garbage_collection_cuda()
         time.sleep(5)
@@ -560,7 +567,9 @@ def fit(config: Config, df_train, df_test=None,
     loss_calibrated = np.sqrt(np.mean((df_oof[config.target_column_name] + df_oof['mu'] - df_oof['logits']) ** 2))
 
     if isinstance(logger, WandbLogger):
-        logger.experiment.log({'oof_rsme': loss, 'oof_rmse_calibrated': loss_calibrated})
+        oof_dict = {'oof_rsme': loss, 'oof_rmse_calibrated': loss_calibrated}
+        logger.experiment.log(oof_dict)
+        print(f'Logging {oof_dict}')
         experiment_name = config.to_str() + f'oof_loss:_{loss}'
         wandb_fn = 'df_oof_' + experiment_name + '.csv'
         wandb_fn = wandb_fn.replace('/', '_')
@@ -592,19 +601,21 @@ def optimizer_to(optim, device):
                         subparam._grad.data = subparam._grad.data.to(device)
 
 
-def fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_class, best_weights, fold, logger):
+def fit_one_fold(config, df_train, df_valid, df_test, data_module_class, model_class, fold, logger):
     import pytorch_lightning as pl
     pl.seed_everything(seed=config.seed)
     datamodule = data_module_class(config=config,
-                                   df_train=df_train.loc[df_train['kfold'] != fold],
-                                   df_valid=df_train.loc[df_train['kfold'] == fold],
+                                   df_train=df_train,
+                                   df_valid=df_valid,
                                    df_test=df_test)
     model = model_class(config=config, fold=fold)
     dirpath = os.path.join(config.root_dir, f'./fold_{fold}')
     checkpoint_callback = ModelCheckpoint(dirpath=dirpath,
                                           filename=config.to_str() + '_{epoch:02d}-{validation_loss:.2f}',
                                           monitor='validation_loss_calibrated')
-    callbacks = [checkpoint_callback, StopFitting()]
+    callbacks = [checkpoint_callback,
+                 # StopFitting()
+                 ]
     if isinstance(config.callbacks, dict):
         callbacks += config.callbacks.get(fold, [])
     if logger is not None:
@@ -630,10 +641,9 @@ def fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_cl
     trainer = pl.Trainer(**trainer_params)
     trainer.fit(model=model, datamodule=datamodule)
     checkpoint_path = checkpoint_callback.best_model_path
-    best_weights.append(checkpoint_path)
     print(f'Loading {checkpoint_path}')
     model.load_state_dict(torch.load(checkpoint_path)['state_dict'])
-    dfs_oof += [model.get_prediction_df(datamodule.val_dataloader())]
+    df_val = model.get_prediction_df(datamodule.val_dataloader())
     model.cpu()
     optimizer_to(trainer.optimizers[0], 'cpu')
     callbacks = None
@@ -644,7 +654,7 @@ def fit_one_fold(config, df_train, df_test, dfs_oof, data_module_class, model_cl
     garbage_collection_cuda()
     time.sleep(10)
     gc.collect()
-    return dfs_oof
+    return df_val, checkpoint_path
 
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
