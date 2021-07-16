@@ -557,6 +557,7 @@ def fit(config: Config, df_train, df_test=None,
         best_weights += [checkpoint_path]
         dfs_oof += [df_val]
         from pytorch_lightning.utilities.memory import garbage_collection_cuda
+        torch.cuda.reset_accumulated_memory_stats()
         garbage_collection_cuda()
         time.sleep(5)
         garbage_collection_cuda()
