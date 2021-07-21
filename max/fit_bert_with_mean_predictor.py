@@ -659,14 +659,14 @@ def fit_one_fold(config, df_train, df_valid, df_test, data_module_class, model_c
 
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
-parser.add_argument('-model_name', type=str, default='distilbert-base-uncased')
-parser.add_argument('-batch_size', type=int, default=4)
-parser.add_argument('-optimizer_name', type=str, default='AdamW')
-parser.add_argument('-loss_name', type=str, default='rmse_l1_loss')
+parser.add_argument('-model_name', type=str, default='microsoft/deberta-v2-xlarge')
+parser.add_argument('-batch_size', type=int, default=2)
+parser.add_argument('-optimizer_name', type=str, default='AdamWNoDecay')
+parser.add_argument('-loss_name', type=str, default='rmse_loss')
 parser.add_argument('-scheduler', type=str, default='linear_schedule_with_warmup')
-parser.add_argument('-accumulate_grad_batches', type=int, default=4)
-parser.add_argument('-lr', type=float, default=3e-5)
-parser.add_argument('-epochs', type=int, default=1)
+parser.add_argument('-accumulate_grad_batches', type=int, default=10)
+parser.add_argument('-lr', type=float, default=1.4e-5)
+parser.add_argument('-epochs', type=int, default=15)
 
 args = parser.parse_args()
 
