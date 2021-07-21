@@ -678,7 +678,7 @@ if __name__ == '__main__':
     except FileNotFoundError:
         print('Not logging in to wandb - file no found')
 
-    df_train = pd.read_csv('train_folds.csv')
+    df_train = pd.read_csv('train_folds_reduced.csv')
 
     config = Config(model_name=args.model_name,
                     batch_size=args.batch_size,
