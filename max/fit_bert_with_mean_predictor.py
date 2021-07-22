@@ -20,6 +20,7 @@ from scipy.stats import norm
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
+from transformers.models.deberta_v2.modeling_deberta_v2 import DebertaV2Layer
 
 import wandb
 
@@ -42,7 +43,8 @@ class Config:
     batch_size: int = 16
     accumulate_grad_batches: int = 1
     max_text_length: int = 256
-    model_name: str = 'roberta-base'
+    model_name: str = 'microsoft/deberta-v2-xlarge'
+    num_layers_to_reinit: int = 3
 
     text_column_name: str = 'excerpt'
     target_column_name: str = 'target'
@@ -159,6 +161,47 @@ def optimizer_factory(optimizer_name, model, lr):
         ]
         return transformers.AdamW(optimizer_parameters, lr=lr)
 
+    elif optimizer_name == 'AdamWDeberta':
+        model_init_lr = lr
+        multiplier = 0.975
+        classifier_lr = lr
+        parameters = []
+
+        lr = model_init_lr
+        end_layer = 23
+        for layer in range(end_layer, -1, -1):
+            layer_params = {'params': [p for n, p in model.named_parameters() if f'encoder.layer.{layer}.' in n],
+                            'lr': lr}
+            parameters.append(layer_params)
+            lr *= multiplier
+
+        embedding_params = {'params': [p for n, p in model.named_parameters() if
+                                       'embeddings.word_embeddings' in n or
+                                       'embeddings.LayerNorm' in n or
+                                       'embeddings.LayerNorm' in n
+                                       ],
+                            'lr': lr}
+        parameters.append(embedding_params)
+
+        classifier_names = ['deberta.encoder.rel_embeddings.weight',
+                            'deberta.encoder.LayerNorm.weight',
+                            'deberta.encoder.LayerNorm.bias',
+                            'deberta.encoder.conv.conv.weight',
+                            'deberta.encoder.conv.conv.bias',
+                            'deberta.encoder.conv.LayerNorm.weight',
+                            'deberta.encoder.conv.LayerNorm.bias',
+                            'pooler.dense.weight',
+                            'pooler.dense.bias',
+                            'classifier.weight',
+                            'classifier.bias']
+        classifier_params = {'params': [p for n, p in model.named_parameters() if
+                                        any([name in n for name in classifier_names])
+                                        ],
+                             'lr': classifier_lr}
+        parameters.append(classifier_params)
+
+        assert len(list(model.named_parameters())) == sum([len(p['params']) for p in parameters])
+        optimizer = transformers.AdamW(parameters, correct_bias=False)
     else:
         raise NotImplementedError(optimizer_name)
     return optimizer
@@ -348,7 +391,9 @@ class NLPModel(LightningModule):
         self.config = config
         self.fold = fold
 
+        self.model_config = None
         self.model = self.get_model()
+        self.reinit_model()
         self.lr = self.config.lr
         self.loss_function = loss_factory(self.config.loss_name)
         self.valid_loss = rmse_loss
@@ -359,7 +404,26 @@ class NLPModel(LightningModule):
         model_config = AutoConfig.from_pretrained(self.config.model_name)
         model_config.num_labels = 1
         model_config.return_dict = True
+        self.model_config = model_config
         return AutoModelForSequenceClassification.from_pretrained(self.config.model_name, config=model_config)
+
+    def reinit_model(self):
+        for idx, layer in enumerate(self.model.deberta.encoder.layer[-self.config.num_layers_to_reinit:]):
+            for module in layer.modules():
+                if isinstance(module, DebertaV2Layer):
+                    for sub_module in layer.modules():
+                        if isinstance(sub_module, nn.Linear):
+                            sub_module.weight.data.normal_(mean=0.0, std=self.model_config.initializer_range)
+                            if sub_module.bias is not None:
+                                sub_module.bias.data.zero_()
+                        elif isinstance(sub_module, nn.Embedding):
+                            sub_module.weight.data.normal_(mean=0.0, std=self.model_config.initializer_range)
+                            if sub_module.padding_idx is not None:
+                                sub_module.weight.data[sub_module.padding_idx].zero_()
+                        elif isinstance(sub_module, nn.LayerNorm):
+                            sub_module.bias.data.zero_()
+                            sub_module.weight.data.fill_(1.0)
+                    print(f'Resetting DebertaV2Layer at layer {-idx - 1}')
 
     def forward(self, input_dict, device=None):
         assert 'logits' not in input_dict
@@ -661,12 +725,13 @@ def fit_one_fold(config, df_train, df_valid, df_test, data_module_class, model_c
 parser = argparse.ArgumentParser(description='Process pytorch params.')
 parser.add_argument('-model_name', type=str, default='microsoft/deberta-v2-xlarge')
 parser.add_argument('-batch_size', type=int, default=2)
-parser.add_argument('-optimizer_name', type=str, default='AdamWNoDecay')
+parser.add_argument('-optimizer_name', type=str, default='AdamWDeberta')
 parser.add_argument('-loss_name', type=str, default='rmse_loss')
 parser.add_argument('-scheduler', type=str, default='linear_schedule_with_warmup')
 parser.add_argument('-accumulate_grad_batches', type=int, default=10)
 parser.add_argument('-lr', type=float, default=1.4e-5)
 parser.add_argument('-epochs', type=int, default=15)
+parser.add_argument('-num_layers_to_reinit', type=int, default=3)
 
 args = parser.parse_args()
 
@@ -686,6 +751,7 @@ if __name__ == '__main__':
                     loss_name=args.loss_name,
                     scheduler=args.scheduler,
                     accumulate_grad_batches=args.accumulate_grad_batches,
+                    num_layers_to_reinit=args.num_layers_to_reinit,
                     lr=args.lr,
                     epochs=args.epochs,
                     overwrite_train_params={'val_check_interval': 0.5})
