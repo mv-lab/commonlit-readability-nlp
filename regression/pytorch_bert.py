@@ -1,4 +1,4 @@
-# %% [code]
+#/ %% [code]
 import platform
 import numpy as np
 import pandas as pd
@@ -29,6 +29,13 @@ import readability
 import syntok.segmenter as segmenter
 import wandb
 from scipy.stats import norm
+from sklearn.model_selection import train_test_split
+from torch.autograd.function import InplaceFunction
+import math
+from torch.utils.data import Sampler,SequentialSampler,RandomSampler,SubsetRandomSampler
+from collections import Counter
+from sklearn.utils import resample
+from torch.optim.swa_utils import AveragedModel, SWALR
 
 parser = argparse.ArgumentParser(description='Process pytorch params.')
 parser.add_argument('-model', '--model', type=str, help='Pytorch (timm) model name')
@@ -72,6 +79,15 @@ parser.add_argument('-use_custom_head', action='store_true', help='Use Custom He
 parser.add_argument('-init_weights', action='store_true', help='Init weights')
 parser.add_argument('-reinit_weights', type=int, help='Re-init last n layers of transformer')
 parser.add_argument('-smooth_loss', action='store_true', help='Smooth loss')
+parser.add_argument('-mixout', type=float, default=0, help='Mixout')
+parser.add_argument('-use_sampler', action='store_true', help='Smooth loss')
+parser.add_argument('-dynamic_padding', action='store_true', help='Smooth loss')
+parser.add_argument('-grad_clip', type=float, help='Gradient Clipping')
+parser.add_argument('-upsample', type=float, help='Upsampling minority')
+parser.add_argument('-no_split_proc', action='store_true', help='no split in preproc')
+parser.add_argument('-automodel_seq', action='store_true', help='Use AutoModelForSequenceClassification')
+parser.add_argument('-no_amp', action='store_true', help='Disable AMP')
+parser.add_argument('-use_conv_head', action='store_true', help='Disable AMP')
 
 
 best_loss = 100
@@ -106,7 +122,7 @@ class Config:
     TRAIN_BS = args.batch_size
     VALID_BS = args.valid_batch_size
     BERT_MODEL = args.model
-    DBERT_MODELS = ['distilbert-base-uncased', 'xlnet', 't5', 'valhalla/bart-large-finetuned-squadv1', 'facebook/bart-large']
+    DBERT_MODELS = ['distilbert-base-uncased', 'xlnet', 't5', 'valhalla/bart-large-finetuned-squadv1', 'facebook/bart-large', 't5-large', 'facebook/dpr-reader-multiset-base']
     FILE_NAME = args.train_file #'../input/train_folds.csv'
     TOKENIZER = transformers.AutoTokenizer.from_pretrained(BERT_MODEL,return_tensors='pt')
     scaler = GradScaler()
@@ -194,38 +210,185 @@ def get_3k_feat(text):
     return count
 
 
+def get_fold_loader(train_data=None, sampler=None,indices=None):
+    train_ds = train_data
+    
+    if sampler=='random':
+        
+        train_sampler = RandomSampler(train_ds,replacement=True)
+        train_dataloader = DataLoader(train_ds,
+                                     sampler = train_sampler,
+                                     batch_size=Config.TRAIN_BS,
+                                     drop_last=False)
+        
+        
+    
+    elif sampler=='sequential':
+        
+        train_sampler = SequentialSampler(train_ds)
+        train_dataloader = DataLoader(train_ds,
+                                     sampler = train_sampler,
+                                     batch_size=Config.TRAIN_BS,
+                                     drop_last=False)
+        
+    elif sampler=='subset':
+        
+        train_sampler = SubsetRandomSampler(indices)
+        train_dataloader = DataLoader(train_ds,
+                                     sampler = train_sampler,
+                                     batch_size=Config.TRAIN_BS,
+                                     drop_last=False)
+        
+        
+        
+        
+        
+    elif sampler=="weighted":
+        
+        train_sampler = weightedsampler(train_ds)
+        train_dataloader = DataLoader(train_ds,
+                                     sampler = train_sampler,
+                                     batch_size=Config.TRAIN_BS,
+                                     num_workers=8,
+                                     worker_init_fn=seed_worker,
+                                     drop_last=False)
+        
+    else:
+        train_dataloader = DataLoader(train_ds,
+                                      shuffle=True,
+                                     batch_size=Config.TRAIN_BS,
+                                     drop_last=False)
+    
+    
+    return train_dataloader
+        
+
+class weightedsampler(Sampler):
+    
+    def __init__(self,dataset):
+        
+        self.indices = list(range(len(dataset)))
+        self.num_samples = len(dataset)
+        self.label_to_count = dict(Counter(dataset.bins))
+        weights = [1/self.label_to_count[i] for i in dataset.bins]
+        
+        self.weights = torch.tensor(weights,dtype=torch.double)
+        
+    def __iter__(self):
+        count = 0
+        index = [self.indices[i] for i in torch.multinomial(self.weights, self.num_samples, replacement=True)]
+        while count < self.num_samples:
+            yield index[count]
+            count += 1
+    
+    def __len__(self):
+        return self.num_samples
+        
+
+class CLMCollate:
+    
+    def __init__(self):
+        self.seq_dic = defaultdict(int)  ## used to track max_length
+        self.batch_record = defaultdict(list)
+        self.bn = 0
+        
+    def __call__(self,batch):
+        out = {'ids' :[],
+               'mask':[],
+               'token_type_ids':[],
+               'targets':[],
+               'errors': [],
+               'rd_features': [],
+               'bins': []
+        }
+        
+        for i in batch:
+            for k,v in i.items():
+                out[k].append(v)
+                
+        if args.dynamic_padding:
+            max_pad =0
+            
+            for p in out['ids']:
+                if max_pad < len(p):
+                    max_pad = len(p)
+                    
+        else:
+            max_pad = args.max_len
+            
+        
+        self.batch_record[str(self.bn)] = [len(x) for x in out['ids']]  
+        self.seq_dic[str(self.bn)] = max_pad
+        self.bn+=1
+        for i in range(len(batch)):
+            input_id = out['ids'][i]
+            att_mask = out['mask'][i]
+            token_type_id = out['token_type_ids'][i]
+            text_len = len(input_id)
+
+            # Add pad based on text len in batch
+            out['ids'][i] = np.hstack((out['ids'][i].detach().numpy(), [1] * (max_pad - text_len))[:max_pad])
+            out['mask'][i] = np.hstack((out['mask'][i].detach().numpy(), [0] * (max_pad - text_len))[:max_pad])
+            out['token_type_ids'][i] = np.hstack((out['token_type_ids'][i].detach().numpy(), [0] * (max_pad - text_len))[:max_pad])
+              
+        out['ids'] = torch.tensor(out['ids'],dtype=torch.long)
+        out['mask'] = torch.tensor(out['mask'],dtype=torch.long)
+        out['token_type_ids'] = torch.tensor(out['token_type_ids'],dtype=torch.long)
+        out['targets'] = torch.tensor(out['targets'],dtype=torch.float)
+        out['errors'] = torch.tensor(out['errors'],dtype=torch.float)
+        out['rd_features'] = torch.tensor(out['rd_features'],dtype=torch.float)
+ 
+        return out
+
+
 # %% [code]
 class BERTDataset(Dataset):
-    def __init__(self, review, rd_features= None, target=None, errors=None, is_test=False):
-        self.review = review
+    def __init__(self, text, rd_features= None, target=None, errors=None, is_test=False, bins=None):
+        self.text = text
         self.target = target
         self.errors = errors
         self.is_test = is_test
         self.tokenizer = Config.TOKENIZER
         self.max_len = Config.MAX_LEN
         self.rd_features = rd_features
+        self.bins = bins
 
     def __len__(self):
-        return len(self.review)
+        return len(self.text)
     
     def __getitem__(self, idx):
-        review = str(self.review[idx])
+        text = str(self.text[idx])
         rd_features = self.rd_features[idx]
         if args.lower:
-           review = review.lower()
-        #review = review.replace('\n', '')
-        review = ' '.join(review.split())
+           text = text.lower()
+        #text = text.replace('\n', '')
+        if not args.no_split_proc:
+            text = ' '.join(text.split())
         global inputs
-        
-        inputs = self.tokenizer.encode_plus(
-            text=review,
-            truncation=True,
-            add_special_tokens=True,
-            max_length=self.max_len,
-            padding='max_length',
-            return_attention_mask=True,
-            return_token_type_ids=True
-        )       
+        if not self.is_test:
+            bins = self.bins[idx]
+
+        if args.dynamic_padding:
+            inputs = self.tokenizer.encode_plus(
+                text=text,
+                truncation=False,
+                add_special_tokens=True,
+                padding=False,
+                return_attention_mask=True,
+                return_token_type_ids=True
+            ) 
+        else:
+            if 'gpt2' in args.model:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            inputs = self.tokenizer.encode_plus(
+                text=text,
+                truncation=True,
+                add_special_tokens=True,
+                max_length=self.max_len,
+                padding='max_length',
+                return_attention_mask=True,
+                return_token_type_ids=True
+            )       
        
  
         ids = torch.tensor(inputs['input_ids'], dtype=torch.long)
@@ -251,7 +414,8 @@ class BERTDataset(Dataset):
                 'token_type_ids': token_type_ids,
                 'targets': targets,
                 'errors': standard_errors,
-                'rd_features': rd_features
+                'rd_features': rd_features,
+                'bins': bins
             }
 
 
@@ -331,7 +495,60 @@ class Trainer:
         """
         prog_bar = tqdm(enumerate(self.train_data), total=len(self.train_data))
         self.model.train()
-        with autocast():
+        if not args.no_amp:
+          with autocast():
+            for step, inputs in prog_bar:
+                ids = inputs['ids'].to(self.device, dtype=torch.long)
+                mask = inputs['mask'].to(self.device, dtype=torch.long)
+                ttis = inputs['token_type_ids'].to(self.device, dtype=torch.long)
+                targets = inputs['targets'].to(self.device, dtype=torch.float)
+                errors = inputs['errors'].to(self.device, dtype=torch.float)
+                rd_features = inputs['rd_features'].to(self.device, dtype=torch.float)
+                # Forward pass of model
+                if any(x in Config.BERT_MODEL for x in Config.DBERT_MODELS):
+                   ttis = None
+                outputs = self.model(ids=ids, mask=mask, token_type_ids=ttis, rd_features=rd_features)
+                loss = self.loss_fn(outputs, targets, errors)
+                loss = loss / args.accumulation_steps
+
+                prog_bar.set_description('Train loss: {:.2f}'.format(loss.item()))
+
+                if args.enable_wandb:
+                    wandb.log({"train_loss": loss})
+
+                Config.scaler.scale(loss).backward()
+                if args.grad_clip:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), args.grad_clip)
+
+                if ((step + 1) % args.accumulation_steps == 0) or ((step + 1) == len(self.train_data)):
+                    Config.scaler.step(self.optimizer)
+                    Config.scaler.update()
+                    self.optimizer.zero_grad()
+
+                    # Moved scheduler step irrespective of grad accum. Want this to change per step
+                    if args.scheduler== 'plateau':
+                        self.scheduler.step(loss)
+                    else:
+                        if args.scheduler == 'swa':
+                            self.model.update_parameters(self.model)
+                        self.scheduler.step()
+
+                # Eval every eval_steps if specified
+                if args.eval_steps and (((step + 1) % args.eval_steps == 0) or ((step + 1) == len(self.train_data))):
+                    current_loss = self.valid_one_epoch()
+                    if args.enable_wandb:
+                        wandb.log({"val_loss": loss})
+                    if current_loss < best_loss:
+                        #print(f'Current loss: {current_loss} Best loss: {best_loss}')
+                        print(f"Saving best model in this fold: {current_loss:.4f}")
+                        self.loss_str = str(current_loss).replace('.','_')
+                        model = self.get_model()
+                        model_to_save = model.module if hasattr(model, 'module') else model  # Only save the model it-self
+                        output_model_file = f"{SAVE_MODEL_FOLDER}/bert_model_fold{fold}.bin" #_epoch{epoch}_{self.loss_str}.bin"
+                        torch.save(model_to_save.state_dict(), output_model_file)
+                        best_loss = current_loss
+
+        else:
             for step, inputs in prog_bar:
                 ids = inputs['ids'].to(self.device, dtype=torch.long)
                 mask = inputs['mask'].to(self.device, dtype=torch.long)
@@ -351,14 +568,23 @@ class Trainer:
                 if args.enable_wandb:
                     wandb.log({"train_loss": loss})
 
-                Config.scaler.scale(loss).backward()
+                #Config.scaler.scale(loss).backward()
+                if args.grad_clip:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), args.grad_clip)
+
                 if ((step + 1) % args.accumulation_steps == 0) or ((step + 1) == len(self.train_data)):
-                    Config.scaler.step(self.optimizer)
-                    Config.scaler.update()
+                    #self.optimizer.step()
+                    #self.optimizer.zero_grad()
+              
+                    loss.backward()
+                    self.optimizer.step()
                     self.optimizer.zero_grad()
+                    # Moved scheduler step irrespective of grad accum. Want this to change per step
                     if args.scheduler== 'plateau':
                         self.scheduler.step(loss)
                     else:
+                        if args.scheduler == 'swa':
+                            self.model.update_parameters(self.model)
                         self.scheduler.step()
 
                 # Eval every eval_steps if specified
@@ -425,13 +651,96 @@ class Trainer:
     def get_model(self):
         return self.model
 
-   
-# %% [markdown]
-# Below are multiple model classes we can use for this task.
-# 
-# In this notebook, I am only training the model on `bert-base-uncased` but you can train it on whatever model you want.
 
-# %% [code]
+
+class Mixout(InplaceFunction):
+    @staticmethod
+    def _make_noise(input):
+        return input.new().resize_as_(input)
+
+    @classmethod
+    def forward(cls, ctx, input, target=None, p=0.0, training=False, inplace=False):
+        if p < 0 or p > 1:
+            raise ValueError("A mix probability of mixout has to be between 0 and 1," " but got {}".format(p))
+        if target is not None and input.size() != target.size():
+            raise ValueError(
+                "A target tensor size must match with a input tensor size {},"
+                " but got {}".format(input.size(), target.size())
+            )
+        ctx.p = p
+        ctx.training = training
+
+        if ctx.p == 0 or not ctx.training:
+            return input
+
+        if target is None:
+            target = cls._make_noise(input)
+            target.fill_(0)
+        target = target.to(input.device)
+
+        if inplace:
+            ctx.mark_dirty(input)
+            output = input
+        else:
+            output = input.clone()
+
+        ctx.noise = cls._make_noise(input)
+        if len(ctx.noise.size()) == 1:
+            ctx.noise.bernoulli_(1 - ctx.p)
+        else:
+            ctx.noise[0].bernoulli_(1 - ctx.p)
+            ctx.noise = ctx.noise[0].repeat(input.size()[0], 1)
+        ctx.noise.expand_as(input)
+
+        if ctx.p == 1:
+            output = target
+        else:
+            output = ((1 - ctx.noise) * target + ctx.noise * output - ctx.p * target) / (1 - ctx.p)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        if ctx.p > 0 and ctx.training:
+            return grad_output * ctx.noise, None, None, None, None
+        else:
+            return grad_output, None, None, None, None
+
+
+def mixout(input, target=None, p=0.0, training=False, inplace=False):
+    return Mixout.apply(input, target, p, training, inplace)
+
+
+class MixLinear(torch.nn.Module):
+    __constants__ = ["bias", "in_features", "out_features"]
+    def __init__(self, in_features, out_features, bias=True, target=None, p=0.0):
+        super(MixLinear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        if bias:
+            self.bias = nn.Parameter(torch.Tensor(out_features))
+        else:
+            self.register_parameter("bias", None)
+        self.reset_parameters()
+        self.target = target
+        self.p = p
+
+    def reset_parameters(self):
+        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+        if self.bias is not None:
+            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in)
+            nn.init.uniform_(self.bias, -bound, bound)
+
+    def forward(self, input):
+        return F.linear(input, mixout(self.weight, self.target, self.p, self.training), self.bias)
+
+    def extra_repr(self):
+        type = "drop" if self.target is None else "mix"
+        return "{}={}, in_features={}, out_features={}, bias={}".format(
+            type + "out", self.p, self.in_features, self.out_features, self.bias is not None
+        )
+
 # Model
 
 class BERTModel(nn.Module):
@@ -442,6 +751,10 @@ class BERTModel(nn.Module):
             self.layer_norm = nn.LayerNorm(args.fc_size + self.rd_feature_len)
         else:
             self.rd_feature_len = 0
+
+        if args.use_last_mean:
+            pass
+            #self.layer_norm = nn.LayerNorm(args.fc_size)
         self.config = transformers.AutoConfig.from_pretrained(Config.BERT_MODEL) 
         if 't5' in Config.BERT_MODEL:
             self.bert = transformers.T5EncoderModel.from_pretrained(Config.BERT_MODEL)
@@ -450,10 +763,18 @@ class BERTModel(nn.Module):
             if args.pretrained_model:
                 print(f'Loading pretrained model: {args.pretrained_model}') 
                 self.bert = transformers.AutoModel.from_pretrained(args.pretrained_model, output_hidden_states=True)
+                if args.automodel_seq: 
+                    self.bert = transformers.AutoModelForSequenceClassification.from_pretrained(args.pretrained_model, num_labels = 1, output_hidden_states=False, output_attentions=False)
+                
             else:
-                self.bert = transformers.AutoModel.from_pretrained(Config.BERT_MODEL , output_hidden_states=True)
+                if 'dpr' in Config.BERT_MODEL:
+                    self.bert = transformers.DPRReader.from_pretrained(Config.BERT_MODEL , output_hidden_states=True)
+                elif args.automodel_seq:
+                    self.bert = transformers.AutoModelForSequenceClassification.from_pretrained(Config.BERT_MODEL, num_labels = 1, output_hidden_states=False, output_attentions=False)
+                else:
+                    self.bert = transformers.AutoModel.from_pretrained(Config.BERT_MODEL , output_hidden_states=True)
 
-        if args.use_dropout and args.use_single_fc:
+        if args.use_dropout and (args.use_single_fc):
            if multisample_dropout:
                self.dropouts = nn.ModuleList([
                  nn.Dropout(args.use_dropout) for _ in range(5)
@@ -465,11 +786,29 @@ class BERTModel(nn.Module):
         if args.use_single_fc:
             self.fc = nn.Linear(args.fc_size + self.rd_feature_len, 1)
         elif args.use_custom_head:
-            self.custom_head = nn.Sequential(OrderedDict([
-            ('attention', AttentionHead(args.fc_size + self.rd_feature_len, args.fc_size)),
+            self.attention = nn.Sequential(            
+                nn.Linear(args.fc_size, 512),            
+                nn.Tanh(),                       
+                nn.Linear(512, 1),
+                nn.Softmax(dim=1)
+            )        
+            
+            self.regressor = nn.Sequential(                        
+                OrderedDict([
+                    ('dropout0', nn.Dropout(args.use_dropout)),
+                    ('fc', nn.Linear(args.fc_size, 1))                        
+                 ])
+                )
+        elif args.automodel_seq:
+            pass
+        elif args.use_conv_head:
+            self.conv = nn.Sequential(OrderedDict([
+            ('conv', nn.Conv1d(args.fc_size, 256, kernel_size=3)),
+            ('act1', nn.GELU()),
             ('dropout1', nn.Dropout(args.use_dropout)),
-            #('l2', nn.Linear(args.fc_size, 1))
-        ]))
+            ]))
+            #self.conv = nn.Conv1d(args.fc_size, 256, kernel_size=2)
+            self.fc = nn.Linear(256, 1)
         else:
             self.whole_head = nn.Sequential(OrderedDict([
             ('dropout0', nn.Dropout(args.use_dropout)),
@@ -479,13 +818,30 @@ class BERTModel(nn.Module):
             ('l2', nn.Linear(256, 1))
             ]))
 
-        #self.fc = nn.Conv1d(args.hidden_size, 1, kernel_size=3) 
         if args.init_weights:
             self._init_weights(self.fc)
 
+        if args.mixout > 0:
+            print(f'Initializing Mixout Regularization: Mixup={args.mixout}')
+            for sup_module in self.bert.modules():
+                for name, module in sup_module.named_children():
+                    if isinstance(module, nn.Dropout):
+                        module.p = 0.0
+                    if isinstance(module, nn.Linear):
+                        target_state_dict = module.state_dict()
+                        bias = True if module.bias is not None else False
+                        new_module = MixLinear(
+                           module.in_features, module.out_features, bias, target_state_dict["weight"], args.mixout
+                        )
+                        new_module.load_state_dict(target_state_dict)
+                        setattr(sup_module, name, new_module)
+            gc.collect()
+            torch.cuda.empty_cache()
+            print('Done!')
+
         if args.reinit_weights:
             reinit_layers = args.reinit_weights
-            if reinit_layers > 0:
+            if 'bert' in args.model:
                 print(f'Reinitializing Last {reinit_layers} Layers of the Transformer Model')
                 #encoder_temp = getattr(self.bert, _model_type)
                 for layer in self.bert.encoder.layer[-reinit_layers:]:
@@ -502,6 +858,12 @@ class BERTModel(nn.Module):
                             module.bias.data.zero_()
                             module.weight.data.fill_(1.0)
                 print('Done!')
+            elif 'bart' in args.model or 'funnel' in args.model:
+               print(f'Reinitializing Last {reinit_layers} Layers ...')
+               for layer in self.bert.decoder.layers[-reinit_layers :]:
+                   for module in layer.modules():
+                        self.bert._init_weights(module)
+               print('Done.!')
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
@@ -517,20 +879,32 @@ class BERTModel(nn.Module):
             module.weight.data.fill_(1.0)
     
     def forward(self, ids, mask, rd_features, token_type_ids=None):
+        
         # Returns keys(['last_hidden_state', 'pooler_output', 'hidden_states'])
         if token_type_ids is not None:
             output = self.bert(ids, attention_mask=mask, token_type_ids=token_type_ids, return_dict=True)
+           # output = self.bert(ids, attention_mask=mask, return_dict=True)
         else:
             output = self.bert(ids, attention_mask=mask, return_dict=True)
+    
+        #print(output.keys())
 
         #output = self.bert(ids, return_dict=True)
      
+
         # Hidden layer
         if args.use_hidden: 
           if args.use_hidden == 'last':
               # Last  hidden states
-              output = output['hidden_states'][-1]
-              output = output.mean(1)
+              if 'bart' in Config.BERT_MODEL:
+                  output = output['decoder_hidden_states'][-1]
+              else:
+                  output = output['hidden_states'][-1]
+              if args.use_custom_head:
+                  weights = self.attention(output)
+                  output = torch.sum(weights * output, dim=1)        
+              else:
+                  output = output.mean(1)
               if args.use_rd_features:
                   output = torch.cat((output, rd_features),1)
                   output = self.layer_norm(output)
@@ -547,18 +921,22 @@ class BERTModel(nn.Module):
           elif args.use_hidden == 'mean':
               hs = output['hidden_states']
               seq_output = torch.cat([hs[-1],hs[-2],hs[-3], hs[-4]], dim=-1)
-              #print(seq_output.shape)
-              #seq_max = torch.amax(seq_output, dim=1) #hs[-1],hs[-2],hs[-3], hs[-4])
-              #print(seq_max.shape)
               input_mask_expanded = mask.unsqueeze(-1).expand(seq_output.size()).float()
               sum_embeddings = torch.sum(seq_output * input_mask_expanded, 1)
               sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
               output = sum_embeddings / sum_mask
-              #output = torch.cat([output, seq_max], dim=1)
-              #print(output.shape)
               if args.use_rd_features:
                   output = torch.cat((output, rd_features),1)
                   output = self.layer_norm(output)
+          elif args.use_hidden == 'conv':
+              hs = output['hidden_states']
+              seq_output = torch.cat([hs[-1],hs[-2],hs[-3]], dim=-1)
+              input_mask_expanded = mask.unsqueeze(-1).expand(seq_output.size()).float()
+              sum_embeddings = torch.sum(seq_output * input_mask_expanded, 1)
+              sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+              output = sum_embeddings / sum_mask
+              output = output.reshape(-1, 3, 1024)
+              output = output.permute(0,2,1)
         # Pooler
         elif args.use_pooler:
           output = output['pooler_output']
@@ -572,16 +950,25 @@ class BERTModel(nn.Module):
           sum_embeddings = torch.sum(output * input_mask_expanded, 1)
           sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
           output = sum_embeddings / sum_mask          
+          #output = self.layer_norm(output)
+
           if args.use_rd_features:
               output = torch.cat((output, rd_features),1)
               output = self.layer_norm(output)
+        elif args.automodel_seq:
+            if 't5' in args.model:
+                output = output['last_hidden_state']
+            else:
+                output = output['logits']
         # CLS
         else:
           # Last layer
-          output = output['last_hidden_state']
-         
-          # CLS token
-          output = output[:,0,:]
+          if 'dpr' in Config.BERT_MODEL:
+              output = output['end_logits']
+          else:
+              output = output['last_hidden_state']
+              # CLS token
+              output = output[:,0,:]
           if args.use_rd_features:
               output = torch.cat((output, rd_features),1)
               output = self.layer_norm(output)
@@ -592,6 +979,7 @@ class BERTModel(nn.Module):
 
         #output = self.layer_norm(output)
 
+        #print(f'Output: {output}')
         #if args.debug:
          #   print(output.shape)
 
@@ -608,7 +996,13 @@ class BERTModel(nn.Module):
         # Custom head
         if not args.use_single_fc:
             if args.use_custom_head:
-                output = self.custom_head(output)
+                output = self.regressor(output) #self.custom_head(output)
+            elif args.automodel_seq:
+                pass
+            elif args.use_conv_head:
+                output = self.conv(output)
+                output = output.squeeze()
+                output = self.fc(output)
             else:
                 output = self.whole_head(output) 
 
@@ -648,6 +1042,114 @@ class T5Pooler(nn.Module):
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
         return pooled_output
+
+
+def create_optimizer(model):
+    if args.debug:
+        for i, layer in enumerate(model.named_parameters()):
+            print(i, layer[0])
+    model_init_lr = args.lr
+    multiplier = 0.975
+    classifier_lr = args.lr
+    parameters = []
+
+    # Encoders
+    lr = model_init_lr
+    end_layer = 23
+    for layer in range(end_layer,-1,-1):
+        """ 
+        # For Funnel arch
+        layer0 = str(layer)[0]
+        try:
+            layer1 = str(layer)[1]
+        except Exception as e:
+            layer1 = layer0
+            layer0 = 0
+        #print(f'{layer0}.{layer1}')
+        # End funnel arch
+        """
+        layer_params = {
+            'params': [p for n,p in model.named_parameters() if f'encoder.layer.{layer}.' in n],
+        #     'params': [p for n,p in model.named_parameters() if f'encoder.blocks.{layer0}.{layer1}' in n],  # funnel arch
+            'lr': lr
+        }
+        parameters.append(layer_params)
+        lr *= multiplier
+
+    # Decoders
+    """
+    lr = model_init_lr
+    end_layer = 2 #23
+    for layer in range(end_layer,-1,-1):
+        # End funnel arch
+        layer_params = {
+             'params': [p for n,p in model.named_parameters() if f'decoder.layers.{layer}' in n],  # funnel arch
+            'lr': lr
+        }
+        parameters.append(layer_params)
+        lr *= multiplier
+ 
+    """
+
+    # Head
+    classifier_params = {
+        'params': [p for n,p in model.named_parameters() if 'conv' in n or 'fc' in n or 'pooler' in n or 'whole_head' in n],
+        'lr': classifier_lr
+    }
+    parameters.append(classifier_params)
+
+    return  transformers.AdamW(parameters)
+
+
+def create_optimizer_old(model):
+    named_parameters = list(model.named_parameters())    
+    if args.debug:
+        for i, layer in enumerate(named_parameters):
+            print(i, layer[0])
+     
+    #print(len(named_parameters)) 
+    #print(named_parameters)
+    bert_parameters = named_parameters[:390]    
+    regressor_parameters = named_parameters[391:]
+        
+    regressor_group = [params for (name, params) in regressor_parameters]
+
+    parameters = []
+    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
+
+    # Standard lr/wd for non bert layers
+    parameters.append({
+        "params": [  p for n, p in regressor_parameters if not any(nd in n for nd in no_decay)],
+        "weight_decay": args.wd,
+        "lr": args.lr
+        })
+
+    parameters.append({
+        "params": [ p for n, p in regressor_parameters if any(nd in n for nd in no_decay)],
+        "weight_decay": 0,
+        "lr": args.lr
+        })
+
+
+    # diff lr for bert layers
+    for layer_num, (name, params) in enumerate(bert_parameters):
+        weight_decay = 0.0 if "bias" in name else args.wd
+
+        lr = args.lr/2.6
+
+        # layer 20 till decoder
+        if layer_num >= 165: #69        
+            lr = args.lr
+
+        # trying start of decoder till end 
+        if layer_num >= 341: #133 
+            lr = 2.6*args.lr
+
+        parameters.append({"params": params,
+                           "weight_decay": weight_decay,
+                           "lr": lr})
+
+    return transformers.AdamW(parameters)
 
 
 def get_optimizer(model):
@@ -708,20 +1210,35 @@ def get_bert_predictions(test_data, model_path):
         model.load_state_dict(torch.load(model_path), strict=True)
 
 
+        num_bins = 5
+        test_data.loc[:,'bins'] = pd.cut(test_data['target'],bins=num_bins,labels=False)
         test_set = BERTDataset(
-            review = test_data[TEXT_COL].values,
+            text = test_data[TEXT_COL].values,
             target = test_data[TARGET_COL].values,
             errors = test_data['standard_error'].values,
-            rd_features = get_rd_features(test_data)
+            rd_features = get_rd_features(test_data),
+            bins =  test_data['bins'].values
         )
 
-        test_data_loader = DataLoader(
-            test_set,
-            batch_size = args.test_batch_size,
-            shuffle = False,
-            num_workers=8,
-            drop_last=False
-        )
+        if args.dynamic_padding:
+            sequence = CLMCollate()
+            test_data_loader = DataLoader(
+                test_set,
+                batch_size = args.test_batch_size,
+                collate_fn=sequence,
+                shuffle = False,
+                num_workers=8,
+                worker_init_fn=seed_worker,
+                drop_last=False
+            )
+        else: 
+            test_data_loader = DataLoader(
+                test_set,
+                batch_size = args.test_batch_size,
+                shuffle = False,
+                num_workers=8,
+                drop_last=False
+            )
 
         prog_bar = tqdm(enumerate(test_data_loader), total=len(test_data_loader))
         model.eval()
@@ -739,7 +1256,6 @@ def get_bert_predictions(test_data, model_path):
 
         return all_predictions
 
-from sklearn.model_selection import train_test_split
 
 def get_rd_features(df):
     rd_features = get_readability_features(df)
@@ -783,49 +1299,98 @@ if __name__ == '__main__':
         train_data = data[data['kfold']!=fold].reset_index(drop=True)
         valid_data = data[data['kfold']==fold].reset_index(drop=True)
 
+        num_bins = 5
+        train_data.loc[:,'bins'] = pd.cut(train_data['target'],bins=num_bins,labels=False)
+        valid_data.loc[:,'bins'] = pd.cut(valid_data['target'],bins=num_bins,labels=False)
+
+
+    # Upsample train set to prevent leakage in val set
+        if args.upsample:
+            
+            # Initialize with majority class
+            final_df = train_data[train_data[TARGET_COL] <= 0 ]
+            print(f'Maj class: {final_df.shape}') 
+             # number of samples in majority class
+            samples = int(args.upsample * final_df.shape[0])
+            print(f"Sampling to match {samples} samples")
+            df_train_min = train_data[train_data[TARGET_COL] > 0]
+            print(f'min class shape: {df_train_min.shape}')
+            upsample_df = resample(df_train_min,
+                                   replace=True,  # sample without replacement
+                                   n_samples=samples,  # to match minority class
+                                   random_state=123)
+            final_df = pd.concat([final_df, upsample_df])
+            train_data = final_df
+            print(train_data.shape)
         train_set = BERTDataset(
-            review = train_data['excerpt'].values,
+            text = train_data['excerpt'].values,
             target = train_data['target'].values,
             errors = train_data['standard_error'].values,
-            rd_features = get_rd_features(train_data)
+            rd_features = get_rd_features(train_data),
+            bins = train_data['bins'].values
         )
 
         valid_set = BERTDataset(
-            review = valid_data['excerpt'].values,
+            text = valid_data['excerpt'].values,
             target = valid_data['target'].values,
             errors = valid_data['standard_error'].values,
-            rd_features = get_rd_features(valid_data)
+            rd_features = get_rd_features(valid_data),
+            bins = valid_data['bins'].values
         )
 
-        train = DataLoader(
-            train_set,
-            batch_size = Config.TRAIN_BS,
-            shuffle = True,
-            num_workers=8,
-            worker_init_fn=seed_worker,
-            drop_last=True
-        )
+        if not args.use_sampler:
+            if args.dynamic_padding:
+                sequence = CLMCollate()
+                train_loader = DataLoader(
+                    train_set,
+                    batch_size = Config.TRAIN_BS,
+                    collate_fn=sequence,
+                    shuffle = True,
+                    num_workers=8,
+                    worker_init_fn=seed_worker,
+                    drop_last=True
+                )
+            else:
+                train_loader = DataLoader(
+                    train_set,
+                    batch_size = Config.TRAIN_BS,
+                    shuffle = True,
+                    num_workers=8,
+                    worker_init_fn=seed_worker,
+                    drop_last=True
+                )
+        else:
+            train_loader = get_fold_loader(train_data=train_set, sampler='weighted')
 
-        valid = DataLoader(
-            valid_set,
-            batch_size = Config.VALID_BS,
-            shuffle = False,
-            num_workers=8,
-            worker_init_fn=seed_worker,
-            drop_last=True
-        )
+        if args.dynamic_padding:
+           sequence = CLMCollate()
+           valid_loader = DataLoader(
+                valid_set,
+                batch_size = Config.VALID_BS,
+                collate_fn=sequence,
+                shuffle = False,
+                num_workers=8,
+                worker_init_fn=seed_worker,
+                drop_last=True
+           )
+        else:
+           valid_loader = DataLoader(
+                valid_set,
+                batch_size = Config.VALID_BS,
+                shuffle = False,
+                num_workers=8,
+                worker_init_fn=seed_worker,
+                drop_last=True
+           )
+
         model = BERTModel(multisample_dropout=args.multisample_dropout).to(DEVICE)
-
+        #model = model.half()
         print(model)
         print(f'Scheduler: {args.scheduler} Learning Rate: {args.lr}')
         print(f'Loss function: {args.loss_fn}')
         if args.use_diff_lr:
             print(f'Using differential learning rate per layer')
  
-        if args.use_dp:
-            if torch.cuda.device_count() > 1:
-                print(f"Found {torch.cuda.device_count()} GPUs. Using DataParallel")
-                model = nn.DataParallel(model)
         # Architectures
         if args.use_hidden:
             print(f'Using hidden layers for model output. Strategy: {args.use_hidden}')
@@ -840,7 +1405,7 @@ if __name__ == '__main__':
        
         # Differential LR 
         if args.use_diff_lr:
-            optimizer = get_optimizer(model)
+            optimizer = create_optimizer(model)
         else:
             optimizer = yield_optimizer(model)
 
@@ -871,10 +1436,21 @@ if __name__ == '__main__':
                                                                mode="min",
                                                                patience=1,
                                                                verbose=True)
-
+        # TODO FIXME  Untested
+        elif args.scheduler == 'swa':
+           model = AveragedModel(model).to(DEVICE)
+           scheduler = SWALR(
+                           optimizer, swa_lr=1e-4, 
+                           anneal_epochs=3, 
+                           anneal_strategy='cos'
+           )   
         
+        if args.use_dp:
+            if torch.cuda.device_count() > 1:
+                print(f"Found {torch.cuda.device_count()} GPUs. Using DataParallel")
+                model = nn.DataParallel(model)
 
-        trainer = Trainer(model, optimizer, scheduler, train, valid, DEVICE)
+        trainer = Trainer(model, optimizer, scheduler, train_loader, valid_loader, DEVICE)
 
         for epoch in range(1, Config.NB_EPOCHS+1):
             #print(f'Best loss: {best_loss}')
@@ -912,7 +1488,7 @@ if __name__ == '__main__':
 
                 print(f"Best RMSE in fold: {fold} was: {best_loss:.4f}")
                 print(f"Final RMSE in fold: {fold} was: {current_loss:.4f}")
-            
+ 
         with open(params_file, 'a+') as f:
             f.write(f"\nBest RMSE in fold: {fold} was: {best_loss:.4f}\n")
 
@@ -922,7 +1498,7 @@ if __name__ == '__main__':
             val_pred = get_bert_predictions(valid_data, model_path=output_model_file)
             oof_predictions[valid_idx] = val_pred
      
-        del train_set, valid_set, train, valid, model, optimizer, scheduler, trainer
+        del train_set, valid_set, train_loader, valid_loader, model, optimizer, scheduler, trainer
         gc.collect()
         torch.cuda.empty_cache()
 
