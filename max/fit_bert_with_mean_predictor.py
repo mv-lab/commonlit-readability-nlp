@@ -17,6 +17,7 @@ from pytorch_lightning import LightningDataModule, LightningModule, Callback, se
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 from scipy.stats import norm
+from torch.nn import HuberLoss
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTokenizer
@@ -74,11 +75,17 @@ def rmse_l1_loss(logits, y_true):
     return torch.sqrt(nn.MSELoss()(logits, y_true)) + 0.1 * nn.L1Loss()(logits, y_true)
 
 
+def huber_loss(logits, y_true):
+    return torch.sqrt(HuberLoss(reduction='mean', delta=1.0)(logits, y_true))
+
+
 def loss_factory(loss_name):
     if loss_name == 'rmse_loss':
         return rmse_loss
     elif loss_name == 'rmse_l1_loss':
         return rmse_l1_loss
+    elif loss_name == 'huber_loss':
+        return huber_loss
     else:
         raise NotImplementedError(loss_name)
 
