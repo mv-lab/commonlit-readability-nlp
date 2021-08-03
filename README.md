@@ -1,4 +1,14 @@
-# commonlit-readability-nlp
+# CommonLit Readability Prize
+
+<img src="https://i.ibb.co/5R0kx5d/commonlit.png" alt="commonlit" border="0">
+
+20th Solution to the Kaggle competition [CommonLit Readability Prize](https://www.kaggle.com/c/commonlitreadabilityprize/overview): _Rate the complexity of literary passages._
+
+**Kaggle Team:** Eduardo Peynetti, TK, Max Jeblick, ryches, Nanashi.
+
+**Result:** 20th of 3682 Teams
+
+<img src="https://i.ibb.co/GQT6n9g/Captura-de-pantalla-2021-08-03-a-las-17-19-02.png" alt="private-lb" border="0">
 
 ### Regression Models 
 
